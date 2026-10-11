@@ -17,3 +17,4 @@ export { SettingsPage } from './SettingsPage';
 export { ShortcutsPage } from './ShortcutsPage';
 export { StartupManagerPage } from './StartupManagerPage';
 export { SystemInfoPage } from './SystemInfoPage';
+export { ToolsPage } from './ToolsPage';

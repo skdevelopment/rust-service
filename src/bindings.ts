@@ -318,6 +318,18 @@ export const commands = {
 	getRestorePoints: () => __TAURI_INVOKE<RestorePointsResponse>("get_restore_points"),
 	/**  Create a new system restore point (requires admin privileges) */
 	createRestorePoint: (description: string) => __TAURI_INVOKE<string>("create_restore_point", { description }),
+	/**  Read the PC and suggest the supported or unsupported route. */
+	assessWindows11Upgrade: () => __TAURI_INVOKE<Windows11UpgradeAssessment>("assess_windows11_upgrade"),
+	/**  Languages for the current Windows 11 ISO on Microsoft's servers. */
+	listWindows11IsoLanguages: () => __TAURI_INVOKE<Windows11IsoCatalog>("list_windows11_iso_languages"),
+	/**  Download that language to `dest_path`. Progress is emitted on `windows11-iso-progress`. */
+	downloadWindows11Iso: (language: string, destPath: string) => __TAURI_INVOKE<Windows11IsoFile>("download_windows11_iso", { language, destPath }),
+	/**  Stop the ISO download. The partial file is deleted. */
+	cancelWindows11IsoDownload: () => __TAURI_INVOKE<void>("cancel_windows11_iso_download"),
+	/**  Current or most recent ISO download. */
+	windows11IsoDownloadStatus: () => __TAURI_INVOKE<Windows11DownloadStatus>("windows11_iso_download_status"),
+	/**  Mount `iso_path` and start Windows Setup for the chosen route. */
+	startWindows11Upgrade: (isoPath: string, route: Windows11UpgradeRoute, advanced: boolean) => __TAURI_INVOKE<Windows11UpgradeStart>("start_windows11_upgrade", { isoPath, route, advanced }),
 };
 
 /* Types */
@@ -2128,5 +2140,78 @@ export type WifiInfo = {
 	receiveRateMbps: number | null,
 	transmitRateMbps: number | null,
 	error: string | null,
+};
+
+/**  Download state, including a download that finished while the page was closed. */
+export type Windows11DownloadStatus = {
+	running: boolean,
+	receivedBytes: number,
+	totalBytes: number | null,
+	finishedPath: string | null,
+	error: string | null,
+};
+
+/**  Languages for the current consumer Windows 11 ISO. */
+export type Windows11IsoCatalog = {
+	releaseName: string,
+	productName: string,
+	edition: string,
+	architecture: string,
+	languages: Windows11IsoLanguage[],
+	suggestedLanguage: string,
+};
+
+/**  A Windows 11 ISO saved on this PC. */
+export type Windows11IsoFile = {
+	path: string,
+	bytes: number,
+	fileName: string,
+};
+
+/**  One Windows 11 language offered by Microsoft's download page. */
+export type Windows11IsoLanguage = {
+	/**  Value passed back to the download command. This is Microsoft's language key. */
+	id: string,
+	name: string,
+};
+
+/**  What the upgrade page shows before the technician picks a route. */
+export type Windows11UpgradeAssessment = {
+	windowsName: string,
+	edition: string,
+	displayVersion: string,
+	build: number,
+	/**  Update Build Revision from the registry, when Windows has one. */
+	updateBuild: number | null,
+	isWindows10: boolean,
+	isWindows11: boolean,
+	is64Bit: boolean,
+	architecture: string,
+	memoryGb: number | null,
+	freeSpaceGb: number | null,
+	hasTpm20: boolean | null,
+	secureBootEnabled: boolean | null,
+	processorName: string,
+	/**  `None` on ARM, where these x86 instructions do not apply. */
+	hasPopcnt: boolean | null,
+	hasSse42: boolean | null,
+	minimumRamGb: number | null,
+	recommendedFreeSpaceGb: number | null,
+	suggestedRoute: Windows11UpgradeRoute,
+};
+
+/**  Supported uses normal Setup. Unsupported uses the server-product compatibility path. */
+export type Windows11UpgradeRoute = 
+/**  `setup.exe` with Windows' own hardware checks. */
+"supported" | 
+/**  `sources\setupprep.exe /Product Server` for PCs that fail those checks. */
+"unsupported";
+
+/**  What was launched, so the page can tell the technician where to continue. */
+export type Windows11UpgradeStart = {
+	drive: string,
+	mediaBuild: number,
+	setupPath: string,
+	arguments: string,
 };
 

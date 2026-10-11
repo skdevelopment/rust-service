@@ -170,6 +170,13 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             // Restore point commands
             commands::restore_points::get_restore_points,
             commands::restore_points::create_restore_point,
+            // Windows 11 upgrade
+            commands::windows11_upgrade::assess_windows11_upgrade,
+            commands::windows11_upgrade::list_windows11_iso_languages,
+            commands::windows11_upgrade::download_windows11_iso,
+            commands::windows11_upgrade::cancel_windows11_iso_download,
+            commands::windows11_upgrade::windows11_iso_download_status,
+            commands::windows11_upgrade::start_windows11_upgrade,
         ])
 }
 

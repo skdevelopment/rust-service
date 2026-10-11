@@ -2,7 +2,7 @@
  * RustService Main Application
  * 
  * Windows desktop toolkit for computer repair technicians.
- * Tab-based navigation with 8 main sections plus custom technician tabs.
+ * Tab-based navigation for work, diagnostics, and library, plus custom technician tabs.
  */
 
 import { useState, useEffect, ReactNode, useMemo } from 'react';
@@ -21,6 +21,7 @@ import {
   Network,
   Skull,
   Bot,
+  Toolbox,
   // Icon picker icons
   Folder,
   Database,
@@ -68,6 +69,7 @@ import {
   StartupManagerPage,
   EventLogPage,
   BluescreenPage,
+  ToolsPage,
 } from '@/pages';
 import type { TechnicianTab } from '@/types/settings';
 
@@ -147,6 +149,7 @@ const WORK_TABS = [
   { id: 'programs', label: 'Programs', icon: AppWindow, component: ProgramsPage },
   { id: 'scripts', label: 'Scripts', icon: ScrollText, component: ScriptsPage },
   { id: 'shortcuts', label: 'Shortcuts', icon: Zap, component: ShortcutsPage },
+  { id: 'tools', label: 'Tools', icon: Toolbox, component: ToolsPage },
 ] as const;
 
 const DIAGNOSTICS_TABS = [

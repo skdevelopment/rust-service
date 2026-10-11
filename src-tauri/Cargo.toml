@@ -68,6 +68,7 @@ winapi = { version = "0.3", features = [
     "libloaderapi",
     "winbase",
     "winver",
+    "winreg",
     "stringapiset",
     "winnls",
     "handleapi",

@@ -14,3 +14,4 @@ export * from './service';
 export * from './settings';
 export * from './startup';
 export * from './system-info';
+export * from './windows11-upgrade';

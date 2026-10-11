@@ -21,3 +21,4 @@ pub(crate) mod startup;
 pub(crate) mod system_info;
 pub(crate) mod time_tracking;
 pub(crate) mod utils;
+pub(crate) mod windows11_upgrade;
