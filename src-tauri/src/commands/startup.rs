@@ -3,7 +3,8 @@
 //! Commands for managing Windows startup programs from Registry and shell folders.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // Helpers
@@ -226,35 +227,19 @@ pub(crate) fn get_registry_startup_items_sync() -> Result<Vec<StartupItem>, Stri
 /// Get startup items from shell startup folders
 pub(crate) fn get_startup_folder_items_sync() -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
-
-    // User startup folder
-    if let Some(user_folder) = dirs::data_local_dir() {
-        let startup_path = user_folder
-            .join("Microsoft")
-            .join("Windows")
-            .join("Start Menu")
-            .join("Programs")
-            .join("Startup");
-
-        items.extend(scan_startup_folder(
-            &startup_path,
-            StartupSource::StartupFolderUser,
-        )?);
+    for (dir, source, approved) in startup_folders() {
+        let approved = read_startup_approved_map(approved);
+        items.extend(scan_startup_folder(&dir, source, &approved)?);
     }
-
-    // All users startup folder
-    let all_users_startup =
-        PathBuf::from(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup");
-    items.extend(scan_startup_folder(
-        &all_users_startup,
-        StartupSource::StartupFolderAllUsers,
-    )?);
-
     Ok(items)
 }
 
 /// Scan a startup folder for items
-fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<StartupItem>, String> {
+fn scan_startup_folder(
+    path: &PathBuf,
+    source: StartupSource,
+    approved: &HashMap<String, bool>,
+) -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
 
     if !path.exists() {
@@ -281,6 +266,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
         let impact = estimate_impact(&name, &command);
         let publisher = get_file_publisher(Some(&command));
         let source_location = path.to_string_lossy().to_string();
+        let enabled = approved_enabled_for(&file_name, approved);
 
         items.push(StartupItem {
             id: encode_id("folder", &[&command]),
@@ -288,7 +274,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
             path: Some(command.clone()),
             source: source.clone(),
             source_location,
-            enabled: true, // Folder items are always "enabled" if they exist
+            enabled,
             publisher,
             description: None,
             impact,
@@ -392,9 +378,7 @@ pub(crate) fn set_startup_item_enabled(id: &str, enabled: bool) -> Result<(), St
     match decode_id(id)? {
         ItemRef::Registry { key, name } => set_registry_item_enabled(&key, &name, enabled),
         ItemRef::Task { path, name } => set_task_enabled(&path, &name, enabled),
-        ItemRef::Folder { .. } => {
-            Err("Startup folder items cannot be disabled - delete them instead".to_string())
-        }
+        ItemRef::Folder { path } => set_folder_item_enabled(&path, enabled),
     }
 }
 
@@ -444,17 +428,31 @@ fn run_powershell(script: &str, what: &str) -> Result<(), String> {
 /// Enable/disable a Run-key item the way Task Manager does: via a
 /// StartupApproved value (created if missing; 02 = enabled, 03 = disabled).
 fn set_registry_item_enabled(run_key: &str, name: &str, enabled: bool) -> Result<(), String> {
-    let approved = approved_key(run_key)?;
+    set_approved_value(&approved_key(run_key)?, name, enabled)
+}
+
+/// Enable/disable a startup-folder item through StartupApproved\StartupFolder,
+/// keyed by its file name (what Task Manager does; the file stays in place).
+fn set_folder_item_enabled(file_path: &str, enabled: bool) -> Result<(), String> {
+    let (file, approved) = locate_folder_item(file_path)?;
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Startup folder item has no file name".to_string())?;
+    set_approved_value(approved, name, enabled)
+}
+
+fn set_approved_value(key: &str, name: &str, enabled: bool) -> Result<(), String> {
     let flag = if enabled { 2 } else { 3 };
     run_powershell(
         &format!(
             r#"
             $key = '{key}'
-            if (-not (Test-Path $key)) {{ New-Item -Path $key -Force | Out-Null }}
+            if (-not (Test-Path -LiteralPath $key)) {{ New-Item -Path $key -Force | Out-Null }}
             $bytes = [byte[]]@({flag},0,0,0,0,0,0,0,0,0,0,0)
-            New-ItemProperty -Path $key -Name '{name}' -PropertyType Binary -Value $bytes -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name '{name}' -PropertyType Binary -Value $bytes -Force | Out-Null
             "#,
-            key = escape_powershell_single_quote(&approved),
+            key = escape_powershell_single_quote(key),
             name = escape_powershell_single_quote(name),
             flag = flag
         ),
@@ -464,6 +462,106 @@ fn set_registry_item_enabled(run_key: &str, name: &str, enabled: bool) -> Result
             "disable startup item"
         },
     )
+}
+
+const USER_FOLDER_APPROVED: &str =
+    r"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
+const MACHINE_FOLDER_APPROVED: &str =
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
+
+/// The per-user and all-users startup folders, with the StartupApproved key
+/// that records each one's enabled state.
+fn startup_folders() -> Vec<(PathBuf, StartupSource, &'static str)> {
+    let startup = Path::new("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs")
+        .join("Startup");
+    let mut folders = Vec::new();
+    // The per-user folder lives in Roaming AppData (%APPDATA%), not Local.
+    if let Some(roaming) = dirs::data_dir() {
+        folders.push((
+            roaming.join(&startup),
+            StartupSource::StartupFolderUser,
+            USER_FOLDER_APPROVED,
+        ));
+    }
+    let program_data = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    folders.push((
+        program_data.join(&startup),
+        StartupSource::StartupFolderAllUsers,
+        MACHINE_FOLDER_APPROVED,
+    ));
+    folders
+}
+
+/// Resolve a startup-folder item to its file and StartupApproved key, refusing
+/// anything that is not directly inside one of the startup folders.
+fn locate_folder_item(file_path: &str) -> Result<(PathBuf, &'static str), String> {
+    let canonical = Path::new(file_path)
+        .canonicalize()
+        .map_err(|e| format!("Startup item not found ({}): {}", file_path, e))?;
+    for (dir, _, approved) in startup_folders() {
+        if let Ok(dir) = dir.canonicalize() {
+            if canonical.parent() == Some(dir.as_path()) {
+                return Ok((canonical, approved));
+            }
+        }
+    }
+    Err(format!(
+        "Refusing to touch a file outside the startup folders: {}",
+        file_path
+    ))
+}
+
+/// Read a StartupApproved key into `value name -> enabled` (missing key: empty).
+fn read_startup_approved_map(key: &str) -> HashMap<String, bool> {
+    let script = format!(
+        r#"
+        $item = Get-ItemProperty -LiteralPath '{key}' -ErrorAction SilentlyContinue
+        $rows = @()
+        if ($item) {{
+            foreach ($prop in $item.PSObject.Properties) {{
+                if ($prop.Name -like 'PS*') {{ continue }}
+                $bytes = [byte[]]$prop.Value
+                $enabled = -not ($bytes -and $bytes.Length -gt 0 -and $bytes[0] -ne 2)
+                $rows += [PSCustomObject]@{{ Name = $prop.Name; Enabled = [bool]$enabled }}
+            }}
+        }}
+        ConvertTo-Json -InputObject @($rows) -Compress -Depth 2
+        "#,
+        key = escape_powershell_single_quote(key)
+    );
+    let Ok(output) = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    ) else {
+        return HashMap::new();
+    };
+    let stdout = crate::proc::decode_output(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    rows.iter()
+        .filter_map(|row| {
+            let name = row.get("Name")?.as_str()?.to_string();
+            let enabled = row.get("Enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            Some((name, enabled))
+        })
+        .collect()
+}
+
+/// Task Manager treats a missing StartupApproved value as enabled.
+fn approved_enabled_for(name: &str, map: &HashMap<String, bool>) -> bool {
+    map.iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, enabled)| *enabled)
+        .unwrap_or(true)
 }
 
 fn set_task_enabled(task_path: &str, name: &str, enabled: bool) -> Result<(), String> {
@@ -549,54 +647,20 @@ fn delete_registry_startup_item(run_key: &str, name: &str) -> Result<(), String>
     )
 }
 
-/// Delete a startup folder item
+/// Delete a startup folder item (and its StartupApproved state)
 fn delete_startup_folder_item(file_path: &str) -> Result<(), String> {
-    let path = std::path::Path::new(file_path);
-
-    if !path.exists() {
-        return Err(format!("File does not exist: {}", file_path));
+    let (file, approved) = locate_folder_item(file_path)?;
+    std::fs::remove_file(&file).map_err(|e| format!("Failed to delete startup item: {}", e))?;
+    if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
+        let _ = run_powershell(
+            &format!(
+                "Remove-ItemProperty -LiteralPath '{}' -Name '{}' -ErrorAction SilentlyContinue",
+                escape_powershell_single_quote(approved),
+                escape_powershell_single_quote(name)
+            ),
+            "clear startup item state",
+        );
     }
-
-    // Safety: ensure the file is actually inside a known startup folder
-    let allowed_dirs: Vec<PathBuf> = {
-        let mut allowed = Vec::new();
-        if let Some(local) = dirs::data_local_dir() {
-            allowed.push(
-                local
-                    .join("Microsoft")
-                    .join("Windows")
-                    .join("Start Menu")
-                    .join("Programs")
-                    .join("Startup"),
-            );
-        }
-        allowed.push(PathBuf::from(
-            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup",
-        ));
-        allowed
-    };
-
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {}", e))?;
-
-    let is_in_startup_folder = allowed_dirs.iter().any(|dir| {
-        if let Ok(canon_dir) = dir.canonicalize() {
-            canonical.starts_with(&canon_dir)
-        } else {
-            false
-        }
-    });
-
-    if !is_in_startup_folder {
-        return Err(format!(
-            "Refusing to delete file outside startup folders: {}",
-            file_path
-        ));
-    }
-
-    std::fs::remove_file(path).map_err(|e| format!("Failed to delete startup item: {}", e))?;
-
     Ok(())
 }
 
@@ -805,5 +869,85 @@ mod tests {
             approved_key(RUN_KEYS[2]).unwrap(),
             r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
         );
+    }
+
+    use std::fs;
+    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn unique_name() -> String {
+        format!("RustServiceStartupTest{}", uuid::Uuid::new_v4().simple())
+    }
+
+    fn run_ps(script: &str) {
+        let _ = run_powershell(script, "run test setup");
+    }
+
+    #[test]
+    fn toggle_startup_item_should_disable_hkcu_run_and_read_back_disabled() {
+        let _guard = crate::lock::lock_mutex(&TEST_LOCK);
+        let name = unique_name();
+        let safe = escape_powershell_single_quote(&name);
+        run_ps(&format!(
+            "New-ItemProperty -LiteralPath '{}' -Name '{safe}' -PropertyType String -Value 'rundll32.exe' -Force | Out-Null",
+            RUN_KEYS[0]
+        ));
+        let id = encode_id("reg", &[RUN_KEYS[0], &name]);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            set_startup_item_enabled(&id, false).expect("toggle off");
+            let items = get_registry_startup_items_sync().expect("list registry startup");
+            let item = items
+                .iter()
+                .find(|i| i.name.eq_ignore_ascii_case(&name))
+                .unwrap_or_else(|| panic!("test Run value {name} not listed: {items:?}"));
+            assert_eq!(item.id, id);
+            assert!(!item.enabled, "expected enabled=false after toggle off, got {item:?}");
+        }));
+        run_ps(&format!(
+            "Remove-ItemProperty -LiteralPath '{}' -Name '{safe}' -ErrorAction SilentlyContinue\nRemove-ItemProperty -LiteralPath '{}' -Name '{safe}' -ErrorAction SilentlyContinue",
+            RUN_KEYS[0],
+            approved_key(RUN_KEYS[0]).unwrap()
+        ));
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
+    }
+
+    #[test]
+    fn toggle_startup_item_should_disable_startup_folder_item_and_read_back_disabled() {
+        let _guard = crate::lock::lock_mutex(&TEST_LOCK);
+        let name = unique_name();
+        let file_name = format!("{name}.lnk");
+        let (dir, _, approved) = startup_folders()
+            .into_iter()
+            .find(|(_, source, _)| *source == StartupSource::StartupFolderUser)
+            .expect("user startup folder");
+        fs::create_dir_all(&dir).expect("create user startup folder");
+        let path = dir.join(&file_name);
+        fs::write(&path, b"").expect("write dummy startup file");
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let find = || {
+                let items = get_startup_folder_items_sync().expect("list folder startup");
+                items
+                    .into_iter()
+                    .find(|i| i.name.eq_ignore_ascii_case(&name))
+                    .unwrap_or_else(|| panic!("test folder item {name} not listed"))
+            };
+            let item = find();
+            assert!(item.enabled, "new folder items start enabled: {item:?}");
+            set_startup_item_enabled(&item.id, false).expect("toggle folder off");
+            let item = find();
+            assert!(!item.enabled, "expected enabled=false after toggle off, got {item:?}");
+        }));
+        let _ = fs::remove_file(&path);
+        run_ps(&format!(
+            "Remove-ItemProperty -LiteralPath '{approved}' -Name '{}' -ErrorAction SilentlyContinue",
+            escape_powershell_single_quote(&file_name)
+        ));
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
     }
 }

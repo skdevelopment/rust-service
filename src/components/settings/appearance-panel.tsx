@@ -1,7 +1,7 @@
 /**
  * Appearance Panel Component
  *
- * Theme mode, color scheme selection, and animation toggle settings.
+ * Theme mode, color scheme selection, bundled fonts, and animation toggle settings.
  */
 
 import {
@@ -12,6 +12,7 @@ import {
   Palette,
   Zap,
   Sparkles,
+  Type,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -19,10 +20,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useSettings } from '@/components/settings-context';
 import { useTheme } from '@/components/theme-provider';
 import type { ThemeMode } from '@/types/settings';
 import { COLOR_SCHEMES } from '@/types/settings';
+import {
+  applyAppFonts,
+  BUNDLED_MONO_FONTS,
+  BUNDLED_UI_FONTS,
+} from '@/lib/fonts';
+
+const DEFAULT_FONT_VALUE = '__default__';
 
 // =============================================================================
 // Animation Toggle
@@ -230,6 +245,101 @@ export function AppearancePanel() {
           <AnimationToggle />
         </CardContent>
       </Card>
+
+      <FontPickers />
     </div>
+  );
+}
+
+function FontPickers() {
+  const { settings, updateSetting, isLoading } = useSettings();
+  const uiFont = settings.appearance?.uiFont ?? '';
+  const monoFont = settings.appearance?.monoFont ?? '';
+
+  const handleUiFont = async (value: string) => {
+    const next = value === DEFAULT_FONT_VALUE ? '' : value;
+    applyAppFonts(next, monoFont);
+    await updateSetting('appearance.uiFont', next);
+  };
+
+  const handleMonoFont = async (value: string) => {
+    const next = value === DEFAULT_FONT_VALUE ? '' : value;
+    applyAppFonts(uiFont, next);
+    await updateSetting('appearance.monoFont', next);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Type className="h-5 w-5 text-primary" />
+          Fonts
+        </CardTitle>
+        <CardDescription>
+          Portable fonts bundled with the app. The same five UI and five code families are used on every machine.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <Label htmlFor="ui-font">Standard (UI) font</Label>
+          <Select
+            value={uiFont || DEFAULT_FONT_VALUE}
+            onValueChange={(v) => v !== null && handleUiFont(v)}
+            disabled={isLoading}
+          >
+            <SelectTrigger id="ui-font" className="w-full">
+              <SelectValue placeholder="System default" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_FONT_VALUE}>System default</SelectItem>
+              {BUNDLED_UI_FONTS.map((font) => (
+                <SelectItem key={`ui-${font.family}`} value={font.family}>
+                  <span style={{ fontFamily: `"${font.family}", sans-serif` }}>{font.family}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p
+            className="text-sm border rounded-md px-3 py-2 bg-muted/40"
+            style={{ fontFamily: uiFont ? `"${uiFont}", sans-serif` : undefined }}
+          >
+            The quick brown fox jumps over the lazy dog.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Applied immediately to body and UI text.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="mono-font">Monospace font</Label>
+          <Select
+            value={monoFont || DEFAULT_FONT_VALUE}
+            onValueChange={(v) => v !== null && handleMonoFont(v)}
+            disabled={isLoading}
+          >
+            <SelectTrigger id="mono-font" className="w-full">
+              <SelectValue placeholder="System default" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_FONT_VALUE}>System default</SelectItem>
+              {BUNDLED_MONO_FONTS.map((font) => (
+                <SelectItem key={`mono-${font.family}`} value={font.family}>
+                  <span style={{ fontFamily: `"${font.family}", monospace` }}>{font.family}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p
+            className="text-sm border rounded-md px-3 py-2 bg-muted/40"
+            style={{ fontFamily: monoFont ? `"${monoFont}", monospace` : 'ui-monospace, monospace' }}
+          >
+            {'const portable = true; // 0123456789'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Applied immediately to code, logs, and terminals.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

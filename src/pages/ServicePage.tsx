@@ -335,7 +335,7 @@ export function ServicePage() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="technician">Technician</Label>
-              <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
+              <Select value={selectedTechnician} onValueChange={(v) => v !== null && setSelectedTechnician(v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select technician..." />
                 </SelectTrigger>

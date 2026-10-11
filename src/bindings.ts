@@ -25,6 +25,12 @@ export const commands = {
 	 *  * `value` - JSON-encoded value to store at that path
 	 */
 	updateSetting: (key: string, value: string) => __TAURI_INVOKE<AppSettings_Serialize>("update_setting", { key, value }),
+	/**  Tauri command: bundled font catalog. */
+	getBundledFonts: () => __TAURI_INVOKE<BundledFont[]>("get_bundled_fonts"),
+	/**  Back-compat alias used by older frontends. */
+	getSystemFonts: () => __TAURI_INVOKE<BundledFont[]>("get_system_fonts"),
+	/**  Tauri command: CSS binding for a pair of persisted font names. */
+	getFontCssBinding: (uiFont: string, monoFont: string) => __TAURI_INVOKE<FontCssBinding>("get_font_css_binding", { uiFont, monoFont }),
 	/**
 	 *  Opens a folder in the system file explorer
 	 * 
@@ -157,6 +163,8 @@ export const commands = {
 	getRequiredProgramsByIds: (ids: string[]) => __TAURI_INVOKE<RequiredProgramDef_Serialize[]>("get_required_programs_by_ids", { ids }),
 	/**  Get the status of all required programs (found/not found, paths) */
 	getRequiredProgramsStatus: () => __TAURI_INVOKE<RequiredProgramStatus_Serialize[]>("get_required_programs_status"),
+	/**  One-click install: download the pinned payload and place it under `data/programs/{id}`. */
+	installRequiredProgram: (id: string) => __TAURI_INVOKE<RequiredProgramStatus_Serialize>("install_required_program", { id }),
 	/**  Set a custom path override for a required program */
 	setProgramPathOverride: (programId: string, path: string | null) => __TAURI_INVOKE<null>("set_program_path_override", { programId, path }),
 	/**  Get the resolved executable path for a required program (for service execution) */
@@ -437,6 +445,10 @@ export type AppearanceSettings = {
 	colorScheme?: string,
 	/**  Whether animations are enabled */
 	enableAnimations?: boolean,
+	/**  Installed UI (sans/body) font family. Empty keeps the default stack. */
+	uiFont?: string,
+	/**  Installed monospace font family. Empty keeps the default stack. */
+	monoFont?: string,
 };
 
 /**  Command approval mode */
@@ -525,6 +537,14 @@ export type BsodStats = {
 	mostCommonModule: string | null,
 	oldestCrash: string | null,
 	newestCrash: string | null,
+};
+
+/**  A font family shipped with the app. */
+export type BundledFont = {
+	/**  CSS `font-family` name matching `@font-face` in `bundled-fonts.css`. */
+	family: string,
+	/**  True for the five code fonts. */
+	isMonospace: boolean,
 };
 
 /**  Business branding and technician settings */
@@ -846,6 +866,22 @@ export type FindingSeverityCounts = {
 	warning: number,
 	error: number,
 	critical: number,
+};
+
+/**  CSS values bound to the document for sans vs mono surfaces. */
+export type FontCssBinding = {
+	/**  Value for [`CSS_VAR_SANS`] (`font-sans` / body UI). */
+	sans: string,
+	/**  Value for [`CSS_VAR_MONO`] (`font-mono` / code / terminal / logs). */
+	mono: string,
+	/**  Value for [`CSS_VAR_BODY`]. */
+	body: string,
+	/**  Value for [`CSS_VAR_HEADING`]. */
+	heading: string,
+	/**  Document CSS variable that receives `sans`. */
+	sansVariable: string,
+	/**  Document CSS variable that receives `mono`. */
+	monoVariable: string,
 };
 
 /**  Metadata for agent-generated files */
@@ -1300,6 +1336,8 @@ export type RequiredProgramDef_Deserialize = {
 	exeNames: string[],
 	/**  Download/info URL (optional) */
 	url: string | null,
+	/**  Direct unattended download URL (exe or zip). None means install click errors. */
+	downloadUrl: string | null,
 };
 
 /**  A program required by one or more services */
@@ -1314,6 +1352,8 @@ export type RequiredProgramDef_Serialize = {
 	exeNames: string[],
 	/**  Download/info URL (optional) */
 	url?: string | null,
+	/**  Direct unattended download URL (exe or zip). None means install click errors. */
+	downloadUrl?: string | null,
 };
 
 /**  Status of a required program (for frontend display) */

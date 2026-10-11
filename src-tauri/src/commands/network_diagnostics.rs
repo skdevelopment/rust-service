@@ -142,7 +142,7 @@ fn get_detailed_network_info_blocking() -> Result<Vec<NetworkInterfaceDetails>, 
                     Description = $adapter.InterfaceDescription
                     MacAddress = $adapter.MacAddress
                     Status = $adapter.Status
-                    SpeedMbps = if ($adapter.LinkSpeed) { [math]::Round($adapter.LinkSpeed / 1000000) } else { $null }
+                    SpeedMbps = if ($adapter.Speed -gt 0) { [math]::Round([double]$adapter.Speed / 1000000) } else { $null }
                     InterfaceType = $adapter.MediaType
                     IPv4Addresses = @($ipv4.IPAddress)
                     IPv6Addresses = @($ipv6.IPAddress | Where-Object { $_ -notlike 'fe80*' })
@@ -170,10 +170,9 @@ fn get_detailed_network_info_blocking() -> Result<Vec<NetworkInterfaceDetails>, 
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| format!("Failed to parse network info: {}", e))?;
 
-    let adapters: Vec<serde_json::Value> = if parsed.is_array() {
-        parsed.as_array().unwrap().clone()
-    } else {
-        vec![parsed]
+    let adapters: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
     };
 
     let mut interfaces = Vec::new();

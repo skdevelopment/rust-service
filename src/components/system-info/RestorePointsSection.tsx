@@ -70,11 +70,9 @@ export function RestorePointsSection({
         <SectionHeader icon={History} title="System Restore Points" iconColor="text-slate-500" />
         <div className="flex items-center gap-2">
           <Dialog open={dialogOpen} onOpenChange={onDialogOpenChange}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm">
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>
                 <Plus className="h-4 w-4 mr-1" />
                 Create
-              </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
@@ -158,8 +156,8 @@ export function RestorePointsSection({
           {[...restorePoints.restorePoints]
             .sort((a, b) => b.sequenceNumber - a.sequenceNumber)
             .map((rp) => (
-              <Card key={rp.sequenceNumber} className="overflow-hidden">
-                <CardContent className="py-3 px-4">
+              <Card size="sm" key={rp.sequenceNumber} className="overflow-hidden">
+                <CardContent>
                   <div className="flex items-center justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-sm truncate">{rp.description}</div>

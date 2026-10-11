@@ -26,7 +26,7 @@ export function NetworkSection({ systemInfo }: NetworkSectionProps) {
       <SectionHeader icon={Network} title="Network Interfaces" iconColor="text-sky-500" />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {systemInfo.networks.map((net, index) => (
-          <Card key={`net-${index}`} className="overflow-hidden">
+          <Card size="sm" key={`net-${index}`} className="overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-medium truncate">

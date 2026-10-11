@@ -13,7 +13,7 @@ use serde_json::json;
 
 use crate::commands::startup::{
     get_registry_startup_items_sync, get_scheduled_startup_tasks_sync,
-    get_startup_folder_items_sync, set_startup_item_enabled, StartupItem, StartupSource,
+    get_startup_folder_items_sync, set_startup_item_enabled, StartupItem,
 };
 use crate::services::{Service, ServiceCtx};
 use crate::types::{
@@ -462,17 +462,6 @@ impl Service for StartupOptimizeService {
 
             for &idx in &unnecessary_enabled {
                 let item = &items[idx];
-
-                // Skip startup folder items (require deletion)
-                if item.source == StartupSource::StartupFolderUser
-                    || item.source == StartupSource::StartupFolderAllUsers
-                {
-                    ctx.log(format!(
-                        "Skipping '{}' (startup folder item — remove manually)",
-                        item.name
-                    ));
-                    continue;
-                }
 
                 let result = set_startup_item_enabled(&item.id, false);
 

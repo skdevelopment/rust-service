@@ -354,7 +354,7 @@ export function BluescreenPage() {
                       className="pl-9"
                     />
                   </div>
-                  <Select value={timeRange} onValueChange={setTimeRange}>
+                  <Select value={timeRange} onValueChange={(v) => v !== null && setTimeRange(v)}>
                     <SelectTrigger className="w-full sm:w-[160px]">
                       <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
                       <SelectValue placeholder="Time range" />
@@ -366,7 +366,7 @@ export function BluescreenPage() {
                       <SelectItem value="90d">Last 90 Days</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select value={sortOrder} onValueChange={setSortOrder}>
+                  <Select value={sortOrder} onValueChange={(v) => v !== null && setSortOrder(v)}>
                     <SelectTrigger className="w-full sm:w-[160px]">
                       <ArrowUpDown className="h-4 w-4 mr-2 text-muted-foreground" />
                       <SelectValue placeholder="Sort order" />
@@ -424,9 +424,8 @@ export function BluescreenPage() {
                           open={expandedEntry === entry.id}
                           onOpenChange={() => handleExpand(entry)}
                         >
-                          <Card className={borderClass}>
-                            <CollapsibleTrigger asChild>
-                              <CardContent className="py-4 cursor-pointer hover:bg-muted/50">
+                          <Card size="sm" className={borderClass}>
+                            <CollapsibleTrigger nativeButton={false} render={<CardContent className="cursor-pointer hover:bg-muted/50" />}>
                                 <div className="flex items-start gap-4">
                                   <Skull className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
                                   <div className="flex-1 min-w-0">
@@ -495,7 +494,6 @@ export function BluescreenPage() {
                                     )}
                                   </div>
                                 </div>
-                              </CardContent>
                             </CollapsibleTrigger>
                             <CollapsibleContent>
                               <Separator />

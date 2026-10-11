@@ -164,7 +164,7 @@ function FindingsRenderer({ result, definition }: ServiceRendererProps) {
               <LabelList
                 dataKey="value"
                 position="right"
-                formatter={(value: number) => `${value.toFixed(0)} MB/s`}
+                formatter={(value) => `${Number(value).toFixed(0)} MB/s`}
                 className="fill-foreground"
                 fontSize={12}
               />

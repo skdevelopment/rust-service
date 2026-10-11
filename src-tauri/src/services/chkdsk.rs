@@ -312,12 +312,28 @@ fn normalize_drive(drive: &str) -> String {
         return "C:".to_string();
     }
 
-    let first_char = d.chars().next().unwrap().to_ascii_uppercase();
+    let Some(first_char) = d.chars().next() else {
+        return "C:".to_string();
+    };
+    let first_char = first_char.to_ascii_uppercase();
     if !first_char.is_ascii_alphabetic() {
         return "C:".to_string();
     }
 
     format!("{}:", first_char)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_drive;
+
+    #[test]
+    fn normalize_drive_should_uppercase_letter_and_default_invalid() {
+        assert_eq!(normalize_drive("c"), "C:");
+        assert_eq!(normalize_drive("d:\\"), "D:");
+        assert_eq!(normalize_drive(""), "C:");
+        assert_eq!(normalize_drive("1"), "C:");
+    }
 }
 
 // =============================================================================

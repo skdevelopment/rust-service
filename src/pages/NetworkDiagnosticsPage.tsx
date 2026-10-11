@@ -256,7 +256,7 @@ export function NetworkDiagnosticsPage() {
                 <h3 className="text-lg font-semibold">Network Interfaces</h3>
                 <div className="grid gap-4 md:grid-cols-2">
                   {interfaces.map((iface, index) => (
-                    <Card key={index}>
+                    <Card size="sm" key={index}>
                       <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
                           <CardTitle className="text-base font-medium">{iface.name}</CardTitle>
@@ -320,7 +320,7 @@ export function NetworkDiagnosticsPage() {
                       onChange={(e) => setPingHost(e.target.value)}
                       className="flex-1"
                     />
-                    <Select value={pingCount} onValueChange={setPingCount}>
+                    <Select value={pingCount} onValueChange={(v) => v !== null && setPingCount(v)}>
                       <SelectTrigger className="w-24">
                         <SelectValue />
                       </SelectTrigger>
@@ -550,7 +550,7 @@ export function NetworkDiagnosticsPage() {
                       onChange={(e) => setDnsQuery(e.target.value)}
                       className="flex-1"
                     />
-                    <Select value={dnsType} onValueChange={setDnsType}>
+                    <Select value={dnsType} onValueChange={(v) => v !== null && setDnsType(v)}>
                       <SelectTrigger className="w-24">
                         <SelectValue />
                       </SelectTrigger>

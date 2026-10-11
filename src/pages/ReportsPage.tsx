@@ -181,8 +181,8 @@ function ReportCard({ report, onView, onDelete }: ReportCardProps) {
   const totalCount = report.results.length;
 
   return (
-    <Card className="group hover:shadow-md transition-all duration-200 hover:border-primary/50">
-      <CardContent className="p-4 py-0">
+    <Card size="sm" className="group hover:shadow-md transition-all duration-200 hover:border-primary/50">
+      <CardContent>
         <div className="flex items-start gap-4">
           {/* Status Icon */}
           <div className={`p-3 rounded-xl border ${statusInfo.bgColor}`}>
@@ -440,7 +440,7 @@ export function ReportsPage() {
         <div className="flex items-center gap-2 flex-shrink-0">
           {/* Technician Filter */}
           {settings.business?.enabled && (settings.business.technicians?.length ?? 0) > 0 && (
-            <Select value={filterTechnician} onValueChange={setFilterTechnician}>
+            <Select value={filterTechnician} onValueChange={(v) => v !== null && setFilterTechnician(v)}>
               <SelectTrigger className="w-40">
                 <User className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="All Techs" />

@@ -189,11 +189,11 @@ export function PresetsView({ presets, definitions, onSelectPreset }: PresetsVie
                       {missingCount > 0 && (
                         <TooltipProvider>
                           <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                            <TooltipTrigger
+                              render={<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400" />}
+                            >
                                 <AlertTriangle className="h-3 w-3" />
                                 {missingCount} missing
-                              </span>
                             </TooltipTrigger>
                             <TooltipContent>
                               <p>{missingCount} service{missingCount > 1 ? 's' : ''} require programs that aren't configured yet</p>

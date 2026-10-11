@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use super::reports;
+use crate::lock::{lock_mutex, wait_condvar};
 use crate::services;
 use crate::types::{
     ServiceDefinition, ServiceQueueItem, ServiceReport, ServiceResult, ServiceRunState,
@@ -39,7 +40,7 @@ static SERVICE_STATE: Mutex<Option<ServiceRunState>> = Mutex::new(None);
 static PAUSE_CONDVAR: Condvar = Condvar::new();
 
 fn state() -> MutexGuard<'static, Option<ServiceRunState>> {
-    SERVICE_STATE.lock().unwrap_or_else(|e| e.into_inner())
+    lock_mutex(&SERVICE_STATE)
 }
 
 fn snapshot() -> ServiceRunState {
@@ -255,7 +256,7 @@ fn is_paused() -> bool {
 fn wait_while_paused() -> bool {
     let mut st = state();
     while st.as_ref().is_some_and(|s| s.is_paused) && !services::cancel_requested() {
-        st = PAUSE_CONDVAR.wait(st).unwrap_or_else(|e| e.into_inner());
+        st = wait_condvar(&PAUSE_CONDVAR, st);
     }
     services::cancel_requested()
 }
@@ -388,7 +389,7 @@ fn run_parallel(
         // Collect finished services and release their resources.
         let done: Vec<(usize, ServiceResult)> = {
             let (lock, _) = &*finished;
-            std::mem::take(&mut *lock.lock().unwrap_or_else(|e| e.into_inner()))
+            std::mem::take(&mut *lock_mutex(lock))
         };
         if !done.is_empty() {
             for (idx, result) in done {
@@ -453,9 +454,7 @@ fn run_parallel(
                 std::thread::spawn(move || {
                     let result = run_one(&app, &item);
                     let (lock, cvar) = &*finished;
-                    lock.lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .push((index, result));
+                    lock_mutex(lock).push((index, result));
                     cvar.notify_all();
                 });
             }
@@ -476,7 +475,7 @@ fn run_parallel(
 
         // Wait for a worker to finish (or for pause/cancel to change).
         let (lock, cvar) = &*finished;
-        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = lock_mutex(lock);
         if guard.is_empty() {
             let _ = cvar.wait_timeout(guard, PARALLEL_POLL_INTERVAL);
         }

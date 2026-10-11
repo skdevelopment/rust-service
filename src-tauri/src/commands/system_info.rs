@@ -29,9 +29,7 @@ fn get_system_info_blocking() -> Result<SystemInfo, String> {
     // Reuse the same System instance between calls so CPU and process usage
     // can be computed from deltas (sysinfo requires at least two refreshes).
     let sys_mutex = SYS.get_or_init(|| Mutex::new(System::new_all()));
-    let mut sys = sys_mutex
-        .lock()
-        .map_err(|_| "Failed to lock system info collector".to_string())?;
+    let mut sys = crate::lock::lock_mutex(sys_mutex);
 
     sys.refresh_all();
 

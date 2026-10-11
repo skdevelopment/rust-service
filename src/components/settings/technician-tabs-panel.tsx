@@ -160,7 +160,7 @@ export function TechnicianTabsPanel() {
     return (
       <Select
         value={value ?? 'auto'}
-        onValueChange={(v) => onChange(v === 'auto' ? undefined : v)}
+        onValueChange={(v) => onChange(v === 'auto' || v === null ? undefined : v)}
       >
         <SelectTrigger className={triggerWidth}>
           <div className="flex items-center gap-2">
@@ -169,8 +169,6 @@ export function TechnicianTabsPanel() {
           </div>
         </SelectTrigger>
         <SelectContent
-          position="popper"
-          sideOffset={4}
           className="w-[220px]"
           style={{ maxHeight: '240px' }}
         >

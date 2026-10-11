@@ -316,7 +316,7 @@ export function EventLogPage() {
           <Card>
             <CardContent className="pt-4">
               <div className="flex flex-wrap gap-4">
-                <Select value={selectedLog} onValueChange={setSelectedLog}>
+                <Select value={selectedLog} onValueChange={(v) => v !== null && setSelectedLog(v)}>
                   <SelectTrigger className="w-48">
                     <SelectValue placeholder="Select log" />
                   </SelectTrigger>
@@ -341,7 +341,7 @@ export function EventLogPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={levelFilter} onValueChange={setLevelFilter}>
+                <Select value={levelFilter} onValueChange={(v) => v !== null && setLevelFilter(v)}>
                   <SelectTrigger className="w-36">
                     <Filter className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="Level" />
@@ -357,7 +357,7 @@ export function EventLogPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={timeRange} onValueChange={setTimeRange}>
+                <Select value={timeRange} onValueChange={(v) => v !== null && setTimeRange(v)}>
                   <SelectTrigger className="w-36">
                     <Calendar className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="Time range" />
@@ -371,7 +371,7 @@ export function EventLogPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={providerFilter} onValueChange={setProviderFilter}>
+                <Select value={providerFilter} onValueChange={(v) => v !== null && setProviderFilter(v)}>
                   <SelectTrigger className="w-48">
                     <SelectValue placeholder="Provider" />
                   </SelectTrigger>
@@ -396,7 +396,7 @@ export function EventLogPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={limit} onValueChange={setLimit}>
+                <Select value={limit} onValueChange={(v) => v !== null && setLimit(v)}>
                   <SelectTrigger className="w-28">
                     <SelectValue />
                   </SelectTrigger>
@@ -481,9 +481,8 @@ export function EventLogPage() {
                         open={expandedEntry === entry.recordId}
                         onOpenChange={(open) => setExpandedEntry(open ? entry.recordId : null)}
                       >
-                        <Card className={`transition-colors ${getLevelRowClass(entry.levelDisplay)}`}>
-                          <CollapsibleTrigger asChild>
-                            <CardContent className="py-3 cursor-pointer hover:bg-muted/50">
+                        <Card size="sm" className={`transition-colors ${getLevelRowClass(entry.levelDisplay)}`}>
+                          <CollapsibleTrigger nativeButton={false} render={<CardContent className="cursor-pointer hover:bg-muted/50" />}>
                               <div className="flex items-start gap-3">
                                 <LevelIcon level={entry.levelDisplay} />
                                 <div className="flex-1 min-w-0">
@@ -515,7 +514,6 @@ export function EventLogPage() {
                                   )}
                                 </div>
                               </div>
-                            </CardContent>
                           </CollapsibleTrigger>
                           <CollapsibleContent>
                             <Separator />

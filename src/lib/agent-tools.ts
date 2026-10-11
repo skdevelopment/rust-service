@@ -631,7 +631,7 @@ You will receive an update as each service completes, and a final summary.`,
         service_id: z.string(),
         enabled: z.boolean().default(true),
         order: z.number().int(),
-        options: z.record(z.string(), z.unknown()).default({}),
+        options: z.looseObject({}).default({}),
       })).min(1).describe('Service queue items'),
       technician_name: z.string().optional().describe('Technician name (business mode)'),
       customer_name: z.string().optional().describe('Customer name (business mode)'),
@@ -788,7 +788,7 @@ export async function runTool(name: string, args: unknown, ctx: ToolRunContext):
   if (isExternalTool(name)) {
     const execute = externalTools[name].execute;
     if (!execute) throw new Error(`MCP tool ${name} cannot be executed`);
-    return execute(args as never, { toolCallId: ctx.toolCallId, messages: [] });
+    return execute(args as never, { toolCallId: ctx.toolCallId, messages: [], context: undefined });
   }
   const def = getToolDef(name);
   if (!def) throw new Error(`Unknown tool: ${name}`);

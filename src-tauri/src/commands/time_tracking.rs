@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use sysinfo::{Components, DiskKind, Disks, Networks, System};
 
 use super::data_dir::get_data_dir_path;
+use crate::lock::lock_mutex;
 use crate::types::{
     FeatureNormalization, NetworkType, PcFingerprint, PresetTimeStats, ServiceModelWeights,
     ServiceTimeMetrics, ServiceTimeSample, ServiceTimeStats,
@@ -202,7 +203,7 @@ fn generate_pc_fingerprint() -> PcFingerprint {
 
     // Use persistent System instance to avoid "always 0.0" CPU usage bug
     let (available_ram_gb, swap_used_gb, cpu_load_percent) = {
-        let mut sys = get_system().lock().unwrap();
+        let mut sys = lock_mutex(get_system());
         sys.refresh_memory();
         sys.refresh_cpu_usage();
         (
@@ -614,7 +615,7 @@ fn make_model_key(service_id: &str, options_hash: &Option<String>) -> String {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_service_time_metrics() -> ServiceTimeMetrics {
-    let metrics = get_cached_metrics().lock().unwrap();
+    let metrics = lock_mutex(get_cached_metrics());
     metrics.clone()
 }
 
@@ -634,7 +635,7 @@ pub fn record_service_time(
     // Generate fingerprint OUTSIDE the lock to avoid freezing UI during hardware scan
     let pc_fingerprint = generate_pc_fingerprint();
 
-    let mut metrics = get_cached_metrics().lock().unwrap();
+    let mut metrics = lock_mutex(get_cached_metrics());
 
     // Clone options_hash before moving into struct (for model key lookup later)
     let options_hash_for_key = options_hash.clone();
@@ -722,7 +723,7 @@ pub fn get_estimated_time(
 ) -> u64 {
     // Move fingerprint generation outside lock
     let fingerprint = generate_pc_fingerprint();
-    let metrics = get_cached_metrics().lock().unwrap();
+    let metrics = lock_mutex(get_cached_metrics());
 
     // Compute hash if options provided
     let options_hash = options.map(|o| compute_options_hash(&o.0));
@@ -771,7 +772,7 @@ pub fn get_estimated_time(
 pub fn get_service_averages() -> Vec<ServiceTimeStats> {
     // Move fingerprint generation outside lock
     let fingerprint = generate_pc_fingerprint();
-    let metrics = get_cached_metrics().lock().unwrap();
+    let metrics = lock_mutex(get_cached_metrics());
 
     let mut by_service: HashMap<String, Vec<ServiceTimeSample>> = HashMap::new();
     for sample in &metrics.samples {
@@ -820,7 +821,7 @@ pub fn get_service_averages() -> Vec<ServiceTimeStats> {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_preset_averages() -> Vec<PresetTimeStats> {
-    let metrics = get_cached_metrics().lock().unwrap();
+    let metrics = lock_mutex(get_cached_metrics());
 
     let mut by_preset: HashMap<String, Vec<ServiceTimeSample>> = HashMap::new();
     for sample in &metrics.samples {
@@ -860,7 +861,7 @@ pub fn get_preset_averages() -> Vec<PresetTimeStats> {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn clear_service_metrics(service_id: Option<String>) -> Result<u32, String> {
-    let mut metrics = get_cached_metrics().lock().unwrap();
+    let mut metrics = lock_mutex(get_cached_metrics());
 
     let before_count = metrics.samples.len();
 
@@ -893,7 +894,7 @@ pub fn clear_service_metrics(service_id: Option<String>) -> Result<u32, String> 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn retrain_time_models() -> Result<u32, String> {
-    let mut metrics = get_cached_metrics().lock().unwrap();
+    let mut metrics = lock_mutex(get_cached_metrics());
 
     // Group samples by (service_id, options_hash) tuple to create specific models
     let mut by_service_options: HashMap<(String, Option<String>), Vec<ServiceTimeSample>> =
@@ -931,6 +932,6 @@ pub fn compute_options_hash(options: &serde_json::Value) -> String {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn flush_service_metrics() -> Result<(), String> {
-    let metrics = get_cached_metrics().lock().unwrap();
+    let metrics = lock_mutex(get_cached_metrics());
     save_metrics(&metrics)
 }

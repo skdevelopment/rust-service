@@ -576,7 +576,7 @@ export function GamepadTestTab() {
           <CardContent>
             <Slider
               value={[deadzone]}
-              onValueChange={([v]) => setDeadzone(v)}
+              onValueChange={(v) => setDeadzone(typeof v === 'number' ? v : v[0])}
               min={0}
               max={0.5}
               step={0.01}

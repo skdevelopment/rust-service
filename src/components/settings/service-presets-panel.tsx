@@ -209,7 +209,7 @@ export function ServicePresetsPanel() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="preset-color">Color</Label>
-                <Select value={formColor} onValueChange={setFormColor}>
+                <Select value={formColor} onValueChange={(v) => v !== null && setFormColor(v)}>
                   <SelectTrigger id="preset-color">
                     <SelectValue />
                   </SelectTrigger>
@@ -240,7 +240,7 @@ export function ServicePresetsPanel() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="preset-icon">Icon</Label>
-              <Select value={formIcon} onValueChange={setFormIcon}>
+              <Select value={formIcon} onValueChange={(v) => v !== null && setFormIcon(v)}>
                 <SelectTrigger id="preset-icon" className="w-[200px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -276,7 +276,7 @@ export function ServicePresetsPanel() {
           const isBuiltinPreset = isBuiltin(preset.id);
 
           return (
-            <Card key={preset.id} className="overflow-hidden">
+            <Card size="sm" key={preset.id} className="overflow-hidden">
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div

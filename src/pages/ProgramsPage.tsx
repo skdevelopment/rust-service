@@ -301,17 +301,19 @@ export function ProgramsPage() {
         </div>
 
         {/* AI Search Toggle */}
-        <TooltipProvider delayDuration={300}>
+        <TooltipProvider delay={300}>
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={aiSearchMode ? 'default' : 'ghost'}
-                size="icon"
-                onClick={toggleAiSearch}
-                className={`h-9 w-9 shrink-0 ${aiSearchMode ? 'bg-purple-600 hover:bg-purple-700 text-white' : ''}`}
-              >
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={aiSearchMode ? 'default' : 'ghost'}
+                  size="icon"
+                  onClick={toggleAiSearch}
+                  className={`h-9 w-9 shrink-0 ${aiSearchMode ? 'bg-purple-600 hover:bg-purple-700 text-white' : ''}`}
+                />
+              }
+            >
                 <Sparkles className="h-4 w-4" />
-              </Button>
             </TooltipTrigger>
             <TooltipContent>{aiSearchMode ? 'Exit AI Search' : 'AI Search'}</TooltipContent>
           </Tooltip>
@@ -332,12 +334,12 @@ export function ProgramsPage() {
             </SelectContent>
           </Select>
 
-          <TooltipProvider delayDuration={300}>
+          <TooltipProvider delay={300}>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => setImportDialogOpen(true)} className="h-9 w-9">
+              <TooltipTrigger
+                render={<Button variant="ghost" size="icon" onClick={() => setImportDialogOpen(true)} className="h-9 w-9" />}
+              >
                   <Upload className="h-4 w-4" />
-                </Button>
               </TooltipTrigger>
               <TooltipContent>Import Legacy Programs</TooltipContent>
             </Tooltip>

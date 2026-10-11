@@ -181,15 +181,14 @@ export function AgentInputArea({
                   size="icon"
                   className="h-10 w-10 shrink-0"
                   disabled={isUploading || isLoading}
-                  asChild
+                  nativeButton={false}
+                  render={<span />}
                 >
-                  <span>
                     {isUploading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Paperclip className="h-4 w-4" />
                     )}
-                  </span>
                 </Button>
               </label>
             </div>

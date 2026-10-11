@@ -5,7 +5,23 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Rocket, RefreshCw, Trash2, Search, AlertCircle, CheckCircle2, Loader2, FolderOpen, Key, Clock, ExternalLink, Filter, ArrowUpDown, Layers, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Rocket,
+  RefreshCw,
+  Trash2,
+  Search,
+  AlertCircle,
+  Loader2,
+  FolderOpen,
+  Key,
+  Clock,
+  ExternalLink,
+  Filter,
+  ArrowUpDown,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -117,18 +133,15 @@ export function StartupManagerPage() {
     loadItems();
   }, [loadItems]);
 
-  // Toggle startup item
+  // Toggle startup item, then re-read OS state so the switch matches persistence.
   const handleToggle = async (item: StartupItem) => {
     setToggling(item.id);
     try {
       await commands.toggleStartupItem(item.id, !item.enabled);
-      // Update local state
-      setItems(prev => prev.map(i =>
-        i.id === item.id ? { ...i, enabled: !i.enabled } : i
-      ));
+      // Re-read so the list shows the state Windows actually recorded
+      setItems(await commands.getStartupItems());
     } catch (err) {
-      console.error('Failed to toggle startup item:', err);
-      // Reload to get correct state
+      setError(err instanceof Error ? err.message : String(err));
       await loadItems();
     } finally {
       setToggling(null);
@@ -232,18 +245,13 @@ export function StartupManagerPage() {
         open={expandedItemId === item.id}
         onOpenChange={(open) => setExpandedItemId(open ? item.id : null)}
       >
-        <Card className={`${!item.enabled ? 'opacity-60' : ''} ${getImpactBorderClass(item.impact)}`}>
-          <CollapsibleTrigger asChild>
-            <CardContent className="py-4 cursor-pointer">
+        <Card size="sm" className={`${!item.enabled ? 'opacity-60' : ''} ${getImpactBorderClass(item.impact)}`}>
+          <CollapsibleTrigger nativeButton={false} render={<CardContent className="cursor-pointer" />}>
               <div className="flex items-start gap-4">
                 {/* Toggle Switch */}
                 <div className="pt-1" onClick={(e) => e.stopPropagation()}>
                   {toggling === item.id ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : item.source.startsWith('startupFolder') ? (
-                    <div className="w-9 h-5 flex items-center justify-center">
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    </div>
                   ) : (
                     <Switch
                       checked={item.enabled}
@@ -265,10 +273,8 @@ export function StartupManagerPage() {
                     )}
                   </div>
                   <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-sm text-muted-foreground mt-1 truncate max-w-lg">
+                    <TooltipTrigger render={<div className="text-sm text-muted-foreground mt-1 truncate max-w-lg" />}>
                         {item.command}
-                      </div>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-md break-all">
                       {item.command}
@@ -320,7 +326,6 @@ export function StartupManagerPage() {
                   )}
                 </div>
               </div>
-            </CardContent>
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="px-6 pb-4 pt-0">
@@ -418,7 +423,7 @@ export function StartupManagerPage() {
                     />
                   </div>
                 </div>
-                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                <Select value={sourceFilter} onValueChange={(v) => v !== null && setSourceFilter(v)}>
                   <SelectTrigger className="w-40">
                     <Filter className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="Source" />
@@ -430,7 +435,7 @@ export function StartupManagerPage() {
                     <SelectItem value="task">Task Scheduler</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select value={statusFilter} onValueChange={(v) => v !== null && setStatusFilter(v)}>
                   <SelectTrigger className="w-32">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
@@ -534,7 +539,7 @@ export function StartupManagerPage() {
                 <strong>Registry items</strong> can be enabled or disabled without deleting them.
               </p>
               <p>
-                <strong>Startup folder items</strong> are always enabled if present - delete to remove.
+                <strong>Startup folder items</strong> can be switched off (Windows remembers this). Delete the shortcut to remove them.
               </p>
               <p>
                 <strong>High impact</strong> items typically use more resources and slow down startup.

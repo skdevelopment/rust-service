@@ -75,8 +75,8 @@ export function InstrumentList({ onRunInstrument, hideHeader = false }: Instrume
         ) : (
             <div className="space-y-3 pb-4">
             {instruments.map((inst) => (
-                <Card key={inst.name} className="overflow-hidden">
-                <CardContent className="p-3">
+                <Card size="sm" key={inst.name} className="overflow-hidden">
+                <CardContent>
                     <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">

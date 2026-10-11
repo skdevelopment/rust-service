@@ -61,7 +61,7 @@ static RUNNING: Mutex<Option<RunningServer>> = Mutex::new(None);
 /// server or rotating its key takes effect without restarting the app.
 pub fn apply_settings(agent: &AgentSettings) {
     let desired = desired_config(agent);
-    let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut running = crate::lock::lock_mutex(&RUNNING);
 
     if running.as_ref().map(|r| &r.config) == desired.as_ref() {
         return;
@@ -158,14 +158,14 @@ fn respond(status: StatusCode, body: Value) -> Response<BoxBody> {
         .status(status)
         .header(CONTENT_TYPE, "application/json")
         .body(BoxBody::new(Bytes::from(body.to_string())))
-        .expect("static response parts are valid")
+        .unwrap_or_else(|_| Response::new(BoxBody::new(Bytes::new())))
 }
 
 fn empty(status: StatusCode) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .body(BoxBody::new(Bytes::new()))
-        .expect("static response parts are valid")
+        .unwrap_or_else(|_| Response::new(BoxBody::new(Bytes::new())))
 }
 
 /// Compare secrets without leaking the matching prefix length through timing.

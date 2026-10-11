@@ -4,7 +4,7 @@ Agent-focused development context for RustService, a Tauri + React Windows deskt
 
 ## Project Overview
 
-- **Stack**: Tauri 2.12 (Rust backend) + Vite + React 18 + TypeScript + TailwindCSS v4 + shadcn/ui
+- **Stack**: Tauri 2.12 (Rust backend) + Vite 8 + React 19 + TypeScript 7 + TailwindCSS v4 + shadcn/ui (Base UI) + AI SDK v7
 - **Target Platform**: Windows 10/11 only
 - **Purpose**: Portable desktop toolkit for computer repair technicians
 
@@ -21,7 +21,7 @@ bun install            # Install frontend dependencies
 bun tauri dev          # Run in development mode (some features require admin)
 bun tauri build        # Build → src-tauri/target/release/rustservice.exe (+ NSIS installer)
 bun run typecheck      # tsc -b (app + vite config)
-bun run lint           # ESLint (TypeScript + React hooks rules)
+bun run lint           # oxlint (correctness + React hooks rules; see .oxlintrc.json)
 cd src-tauri && cargo test     # Rust unit tests; also regenerates src/bindings.ts
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 ```
@@ -119,7 +119,10 @@ Always use the CLI, never create shadcn components manually:
 ```bash
 bunx shadcn@latest add <component-name>
 ```
-Components use `new-york` style with TailwindCSS v4.
+Components use the `base-nova` style (Base UI primitives, not Radix) with TailwindCSS v4:
+compose with the `render` prop instead of `asChild`, and pass `nativeButton={false}` when a
+button-like trigger renders a non-`<button>` element. Select/Slider `onValueChange` receive
+`string | null` / `number | readonly number[]`.
 
 ### Creating New Pages
 1. Create `src/pages/NewPage.tsx` following existing patterns
@@ -138,6 +141,9 @@ Components use `new-york` style with TailwindCSS v4.
 - Color scheme variables live in `src/styles/themes/<id>.css`, imported from `src/styles/globals.css`
   (which maps them to Tailwind colors in `@theme inline`)
 - Support both light and dark modes via the `.dark` class
+- Fonts are bundled (`public/fonts`, `src/styles/bundled-fonts.css`) — never load them from the network.
+  The UI/mono font settings map to `--app-font-sans` / `--app-font-mono` (`src/lib/fonts.ts`,
+  mirrored by `src-tauri/src/commands/fonts.rs`).
 
 ## Data Folder
 

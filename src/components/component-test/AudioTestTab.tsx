@@ -296,7 +296,7 @@ export function AudioTestTab() {
               <span className="text-muted-foreground">Frequency</span>
               <Badge variant="outline">{frequency[0]} Hz</Badge>
             </div>
-            <Slider value={frequency} onValueChange={setFrequency} min={100} max={2000} step={50} className="w-full" disabled={isSweeping} />
+            <Slider value={frequency} onValueChange={(v) => setFrequency(typeof v === 'number' ? [v] : [...v])} min={100} max={2000} step={50} className="w-full" disabled={isSweeping} />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>100 Hz</span>
               <span>2000 Hz</span>
@@ -316,7 +316,7 @@ export function AudioTestTab() {
               <span className="text-muted-foreground">Volume</span>
               <Badge variant="outline">{volume[0]}%</Badge>
             </div>
-            <Slider value={volume} onValueChange={setVolume} min={0} max={100} step={5} className="w-full" />
+            <Slider value={volume} onValueChange={(v) => setVolume(typeof v === 'number' ? [v] : [...v])} min={0} max={100} step={5} className="w-full" />
           </div>
 
           {/* L/R Channel */}

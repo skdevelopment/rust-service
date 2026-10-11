@@ -214,6 +214,12 @@ export const COLOR_SCHEMES: ColorSchemeInfo[] = [
  */
 export type AppearanceSettings = B.AppearanceSettings;
 
+/** Bundled font family from `get_bundled_fonts`. */
+export type BundledFont = B.BundledFont;
+
+/** CSS values applied to the document for sans vs mono surfaces. */
+export type FontCssBinding = B.FontCssBinding;
+
 /**
  * Data and storage related settings
  */
@@ -304,6 +310,8 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: 'system',
   colorScheme: 'forge',
   enableAnimations: true,
+  uiFont: '',
+  monoFont: '',
 };
 
 /**
@@ -364,7 +372,7 @@ export const DEFAULT_PRESETS: PresetsSettings = {
  * Default application settings
  */
 export const DEFAULT_SETTINGS: AppSettings = {
-  version: '0.7.0',
+  version: '0.8.0',
   appearance: DEFAULT_APPEARANCE,
   data: DEFAULT_DATA,
   reports: DEFAULT_REPORTS,

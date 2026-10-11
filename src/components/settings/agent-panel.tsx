@@ -325,7 +325,7 @@ export function AgentPanel() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Provider</Label>
-              <Select value={currentProvider} onValueChange={handleProviderChange}>
+              <Select value={currentProvider} onValueChange={(v) => v !== null && handleProviderChange(v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -400,7 +400,7 @@ export function AgentPanel() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>Approval Mode</Label>
-            <Select value={agentSettings?.approvalMode || 'always'} onValueChange={handleApprovalModeChange}>
+            <Select value={agentSettings?.approvalMode || 'always'} onValueChange={(v) => v !== null && handleApprovalModeChange(v)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -484,7 +484,7 @@ export function AgentPanel() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>Search Provider</Label>
-            <Select value={agentSettings?.searchProvider || 'none'} onValueChange={handleSearchProviderChange}>
+            <Select value={agentSettings?.searchProvider || 'none'} onValueChange={(v) => v !== null && handleSearchProviderChange(v)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

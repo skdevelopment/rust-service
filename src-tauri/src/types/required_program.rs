@@ -20,6 +20,9 @@ pub struct RequiredProgramDef {
     /// Download/info URL (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Direct unattended download URL (exe or zip). None means install click errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
 }
 
 /// Status of a required program (for frontend display)

@@ -139,16 +139,18 @@ export function ConversationSelector({
   return (
     <>
       <DropdownMenu open={open} onOpenChange={setOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn('gap-2 font-normal', className)}
-          >
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn('gap-2 font-normal', className)}
+            />
+          }
+        >
             <MessageCircle className="h-4 w-4" />
             <span className="max-w-[150px] truncate">{displayTitle}</span>
             <ChevronDown className="h-3 w-3 opacity-50" />
-          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-72">
           {/* New Chat */}

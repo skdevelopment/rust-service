@@ -7,6 +7,7 @@ pub(crate) mod bluescreen;
 pub(crate) mod data_dir;
 pub(crate) mod disk_health;
 pub(crate) mod event_log;
+pub(crate) mod fonts;
 pub(crate) mod network;
 pub(crate) mod network_diagnostics;
 pub(crate) mod programs;

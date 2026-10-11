@@ -30,6 +30,7 @@ import {
 import { commands } from '@/bindings';
 import type { AppSettings, SettingKey, SettingValueType } from '@/types/settings';
 import { DEFAULT_SETTINGS } from '@/types/settings';
+import { applyAppFonts } from '@/lib/fonts';
 
 // =============================================================================
 // Context Types
@@ -95,6 +96,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  const { uiFont, monoFont } = settings.appearance;
+  useEffect(() => {
+    applyAppFonts(uiFont ?? '', monoFont ?? '');
+  }, [uiFont, monoFont]);
 
   const updateSetting = useCallback(
     async <K extends SettingKey>(key: K, value: SettingValueType<K>) => {

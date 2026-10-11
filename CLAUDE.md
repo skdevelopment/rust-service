@@ -14,7 +14,7 @@ bun install                 # Install frontend dependencies
 bun tauri dev               # Run in dev mode (some features require admin)
 bun tauri build             # Build → src-tauri/target/release/rustservice.exe
 bun run typecheck           # tsc -b
-bun run lint                # ESLint
+bun run lint                # oxlint (ESLint can't run on TypeScript 7)
 cd src-tauri && cargo test  # Rust tests (also regenerates src/bindings.ts)
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 ```
@@ -26,7 +26,10 @@ Always use the CLI, never create them manually:
 ```bash
 bunx shadcn@latest add <component-name>
 ```
-Components use `new-york` style with TailwindCSS v4. Do NOT manually edit files in `src/components/ui/`.
+Components use the `base-nova` style (Base UI primitives, not Radix) with TailwindCSS v4:
+compose with the `render` prop instead of `asChild`, and pass `nativeButton={false}` when a
+button-like trigger renders a non-`<button>` element. Select/Slider `onValueChange` receive
+`string | null` / `number | readonly number[]`. Do NOT manually edit files in `src/components/ui/`.
 
 ## Architecture
 

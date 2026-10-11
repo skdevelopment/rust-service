@@ -8,7 +8,7 @@
 
 .theme-claude {
   /* Fonts: Poppins headings, system-ui body (matches claude.ai sans-serif feel) */
-  --font-heading: 'Poppins', 'Segoe UI', system-ui, sans-serif;
+  --font-heading: "Inter", "Segoe UI", system-ui, sans-serif;
   --font-body: 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
 
   /* Surfaces */

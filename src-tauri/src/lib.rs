@@ -12,6 +12,7 @@
 
 mod commands;
 mod llm;
+mod lock;
 mod logging;
 mod mcp;
 mod proc;
@@ -39,6 +40,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::data_dir::ensure_data_dir,
             commands::settings::get_settings,
             commands::settings::update_setting,
+            commands::fonts::get_bundled_fonts,
+            commands::fonts::get_system_fonts,
+            commands::fonts::get_font_css_binding,
             commands::utils::open_folder,
             commands::shortcuts::open_shortcut,
             commands::system_info::get_system_info,
@@ -88,6 +92,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::required_programs::get_required_programs,
             commands::required_programs::get_required_programs_by_ids,
             commands::required_programs::get_required_programs_status,
+            commands::required_programs::install_required_program,
             commands::required_programs::set_program_path_override,
             commands::required_programs::get_program_exe_path,
             commands::required_programs::validate_required_programs,
@@ -218,5 +223,6 @@ pub fn run() {
         })
         .invoke_handler(specta.invoke_handler())
         .run(tauri::generate_context!())
+        // Fatal: without a running event loop the desktop app cannot start.
         .expect("error while running tauri application");
 }
