@@ -39,3 +39,28 @@ pub struct RequiredProgramStatus {
     /// Whether using a custom path override
     pub is_custom: bool,
 }
+
+/// Phase of a one-click required-program install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RequiredProgramInstallPhase {
+    Downloading,
+    Extracting,
+    Done,
+    Error,
+}
+
+/// Live progress for `required-program-install-progress`.
+///
+/// The install command keeps running after the dialog closes. The UI listens
+/// for this payload so Settings and a reopened dialog show the same status.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredProgramInstallProgress {
+    pub program_id: String,
+    pub phase: RequiredProgramInstallPhase,
+    pub bytes_received: u64,
+    pub bytes_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}

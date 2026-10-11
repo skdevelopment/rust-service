@@ -16,7 +16,9 @@ import {
   Globe,
   Timer,
   Layers,
+  Loader2,
 } from 'lucide-react';
+import { isInstallActive, useRequiredProgramInstall } from '@/components/required-program-install-context';
 import type { LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -122,6 +124,9 @@ interface SettingsSidebarProps {
 }
 
 export function SettingsSidebar({ activeCategory, onCategoryChange }: SettingsSidebarProps) {
+  const { jobs } = useRequiredProgramInstall();
+  const installingCount = Object.values(jobs).filter((job) => isInstallActive(job)).length;
+
   return (
     <div className="w-52 border-r bg-muted/30 flex flex-col">
       <div className="flex items-center gap-2 p-4 border-b">
@@ -149,6 +154,12 @@ export function SettingsSidebar({ activeCategory, onCategoryChange }: SettingsSi
             >
               <Icon className={cn('h-4 w-4', item.iconColor)} />
               <span className="truncate">{item.label}</span>
+              {item.id === 'programs' && installingCount > 0 ? (
+                <>
+                  <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-primary" aria-hidden />
+                  <span className="sr-only">Installing</span>
+                </>
+              ) : null}
             </Button>
           );
         })}

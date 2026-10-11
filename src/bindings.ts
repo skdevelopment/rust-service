@@ -163,7 +163,12 @@ export const commands = {
 	getRequiredProgramsByIds: (ids: string[]) => __TAURI_INVOKE<RequiredProgramDef_Serialize[]>("get_required_programs_by_ids", { ids }),
 	/**  Get the status of all required programs (found/not found, paths) */
 	getRequiredProgramsStatus: () => __TAURI_INVOKE<RequiredProgramStatus_Serialize[]>("get_required_programs_status"),
-	/**  One-click install: download the pinned payload and place it under `data/programs/{id}`. */
+	/**
+	 *  One-click install: download the pinned payload and place it under `data/programs/{id}`.
+	 * 
+	 *  Progress is emitted on [`INSTALL_PROGRESS_EVENT`] and is not tied to the
+	 *  dialog that started the install. Closing that dialog does not cancel the work.
+	 */
 	installRequiredProgram: (id: string) => __TAURI_INVOKE<RequiredProgramStatus_Serialize>("install_required_program", { id }),
 	/**  Set a custom path override for a required program */
 	setProgramPathOverride: (programId: string, path: string | null) => __TAURI_INVOKE<null>("set_program_path_override", { programId, path }),

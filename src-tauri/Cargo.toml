@@ -70,6 +70,10 @@ winapi = { version = "0.3", features = [
     "winver",
     "stringapiset",
     "winnls",
+    "handleapi",
+    "processthreadsapi",
+    "securitybaseapi",
+    "synchapi",
 ] }
 widestring = "1.0"
 

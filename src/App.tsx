@@ -47,6 +47,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { SettingsProvider, useSettings } from '@/components/settings-context';
 import { AnimationProvider, useAnimation, motion, AnimatePresence, tabContentVariants } from '@/components/animation-context';
 import { ServiceRunProvider } from '@/components/service-run-context';
+import { RequiredProgramInstallProvider } from '@/components/required-program-install-context';
 import { AgentSessionProvider } from '@/components/agent-session-context';
 import { NAVIGATE_TAB_EVENT } from '@/lib/navigation';
 import { FloatingServiceStatus } from '@/components/floating-service-status';
@@ -356,13 +357,15 @@ function App() {
       <ThemeProvider>
         <AnimationProvider>
           <ServiceRunProvider>
-            <AgentSessionProvider>
-              <ErrorBoundary>
-                <TooltipProvider>
-                  <AppContent />
-                </TooltipProvider>
-              </ErrorBoundary>
-            </AgentSessionProvider>
+            <RequiredProgramInstallProvider>
+              <AgentSessionProvider>
+                <ErrorBoundary>
+                  <TooltipProvider>
+                    <AppContent />
+                  </TooltipProvider>
+                </ErrorBoundary>
+              </AgentSessionProvider>
+            </RequiredProgramInstallProvider>
           </ServiceRunProvider>
         </AnimationProvider>
       </ThemeProvider>

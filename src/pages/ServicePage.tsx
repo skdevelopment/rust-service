@@ -43,6 +43,7 @@ import { PresetsView } from '@/components/service/PresetsView';
 import { QueueView } from '@/components/service/QueueView';
 import { RunnerView } from '@/components/service/RunnerView';
 import { ResultsView } from '@/components/service/ResultsView';
+import { MissingProgramsDialog } from '@/components/service/MissingProgramsDialog';
 import { commands } from '@/bindings';
 import { navigateTo } from '@/lib/navigation';
 
@@ -281,47 +282,22 @@ export function ServicePage() {
         />
       )}
 
-      {/* Missing Requirements Dialog */}
-      <Dialog open={showMissingDialog} onOpenChange={setShowMissingDialog}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Missing Required Programs</DialogTitle>
-            <DialogDescription>
-              One or more enabled services require external programs that are not configured yet.
-              Configure them in Settings → Programs, then try again.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            {missingRequirements &&
-              Object.entries(missingRequirements).map(([serviceId, missing]) => {
-                const def = definitions.find((d) => d.id === serviceId);
-                return (
-                  <div key={serviceId} className="rounded-lg border bg-muted/20 p-3">
-                    <div className="font-medium">{def?.name ?? serviceId}</div>
-                    <div className="text-sm text-muted-foreground mt-1">
-                      Missing: <span className="font-mono">{missing.join(', ')}</span>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowMissingDialog(false);
-                // Navigate to Settings tab, then to Programs category
-                navigateTo('settings', 'programs');
-              }}
-            >
-              Go to Settings
-            </Button>
-            <Button onClick={() => setShowMissingDialog(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MissingProgramsDialog
+        open={showMissingDialog}
+        onOpenChange={setShowMissingDialog}
+        missing={missingRequirements}
+        onMissingChange={setMissingRequirements}
+        definitions={definitions}
+        enabledServiceIds={queue.filter((item) => item.enabled).map((item) => item.serviceId)}
+        onStart={() => {
+          setShowMissingDialog(false);
+          void handleStart(parallelMode);
+        }}
+        onOpenSettings={() => {
+          setShowMissingDialog(false);
+          navigateTo('settings', 'programs');
+        }}
+      />
 
       {/* Business Mode Start Dialog */}
       <Dialog open={showStartDialog} onOpenChange={setShowStartDialog}>

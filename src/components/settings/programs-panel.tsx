@@ -5,7 +5,7 @@
  * One-click Install fetches a zip/PE there; it never runs a Windows installer.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import {
   ExternalLink,
@@ -29,31 +29,51 @@ import {
 } from '@/components/ui/table';
 import type { RequiredProgramStatus } from '@/types/required-programs';
 import { commands } from '@/bindings';
+import {
+  InstallProgress,
+  isInstallActive,
+  programInstallPath,
+  useRequiredProgramInstall,
+} from '@/components/required-program-install-context';
 
 export function ProgramsPanel() {
+  const { jobs, dataDir, install } = useRequiredProgramInstall();
   const [statuses, setStatuses] = useState<RequiredProgramStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [installingId, setInstallingId] = useState<string | null>(null);
-  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
 
-  const loadStatuses = async () => {
+  const loadStatuses = useCallback(async () => {
     try {
       const data = await commands.getRequiredProgramsStatus();
       setStatuses(data);
     } catch (e) {
       console.error('Failed to load required programs:', e);
     }
-  };
+  }, []);
+
+  const doneKey = Object.values(jobs)
+    .filter((job) => job.phase === 'done')
+    .map((job) => job.programId)
+    .sort()
+    .join('\n');
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
       setIsLoading(true);
       await loadStatuses();
-      setIsLoading(false);
+      if (!cancelled) setIsLoading(false);
     }
-    init();
-  }, []);
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadStatuses]);
+
+  useEffect(() => {
+    if (!doneKey) return;
+    void loadStatuses();
+  }, [doneKey, loadStatuses]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -85,29 +105,20 @@ export function ProgramsPanel() {
     }
   };
 
-  const handleInstall = async (programId: string) => {
-    setInstallingId(programId);
-    setInstallErrors((prev) => {
-      const next = { ...prev };
-      delete next[programId];
-      return next;
-    });
-    try {
-      await commands.installRequiredProgram(programId);
-      await loadStatuses();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setInstallErrors((prev) => ({ ...prev, [programId]: message }));
-    } finally {
-      setInstallingId(null);
-    }
+  const handleInstall = (programId: string) => {
+    void install(programId);
   };
 
   const foundCount = statuses.filter((s) => s.found).length;
   const missingCount = statuses.length - foundCount;
-  const firstError = Object.entries(installErrors)[0];
+  const activeJobs = Object.values(jobs).filter((job) => isInstallActive(job));
+  const firstError = Object.values(jobs).find((job) => {
+    if (job.phase !== 'error') return false;
+    const status = statuses.find((item) => item.definition.id === job.programId);
+    return !status?.found;
+  });
 
-  if (isLoading) {
+  if (isLoading && statuses.length === 0 && activeJobs.length === 0) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-56" />
@@ -146,17 +157,36 @@ export function ProgramsPanel() {
       {firstError ? (
         <Alert variant="destructive">
           <AlertTitle>Install failed</AlertTitle>
-          <AlertDescription>{firstError[1]}</AlertDescription>
+          <AlertDescription>
+            {firstError.message ?? 'The download did not finish.'}
+          </AlertDescription>
         </Alert>
       ) : null}
 
       {statuses.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
-          <Package className="h-8 w-8 text-muted-foreground mb-2" />
-          <p className="text-sm text-muted-foreground">
-            No required programs defined yet.
-          </p>
-        </div>
+        activeJobs.length > 0 ? (
+          <div className="space-y-2">
+            {activeJobs.map((job) => {
+              const destination = programInstallPath(dataDir, job.programId);
+              return (
+                <div key={job.programId} className="rounded-lg border p-3 space-y-1.5">
+                  <div className="text-sm font-medium">{job.programId}</div>
+                  <p className="font-mono text-xs break-all text-muted-foreground" title={destination}>
+                    {destination}
+                  </p>
+                  <InstallProgress job={job} />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
+            <Package className="h-8 w-8 text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">
+              No required programs defined yet.
+            </p>
+          </div>
+        )
       ) : (
         <div className="rounded-lg border">
           <Table>
@@ -171,7 +201,10 @@ export function ProgramsPanel() {
             <TableBody>
               {statuses.map((status) => {
                 const id = status.definition.id;
-                const error = installErrors[id];
+                const job = jobs[id];
+                const active = isInstallActive(job);
+                const destination = programInstallPath(dataDir, id);
+                const error = job?.phase === 'error' ? job.message : null;
                 return (
                   <TableRow key={id}>
                     <TableCell>
@@ -181,7 +214,9 @@ export function ProgramsPanel() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {status.found ? (
+                      {active ? (
+                        <Badge>Installing</Badge>
+                      ) : status.found ? (
                         <Badge variant="secondary">Found</Badge>
                       ) : (
                         <Badge variant="outline">Missing</Badge>
@@ -193,7 +228,14 @@ export function ProgramsPanel() {
                       ) : null}
                     </TableCell>
                     <TableCell className="max-w-[18rem]">
-                      {status.path ? (
+                      {active ? (
+                        <div className="space-y-1.5">
+                          <span className="font-mono text-xs break-all block" title={destination}>
+                            {destination}
+                          </span>
+                          {job ? <InstallProgress job={job} /> : null}
+                        </div>
+                      ) : status.path ? (
                         <span className="font-mono text-xs truncate block" title={status.path}>
                           {status.path}
                         </span>
@@ -205,6 +247,11 @@ export function ProgramsPanel() {
                       {error ? (
                         <p className="text-xs text-destructive mt-1 whitespace-normal">{error}</p>
                       ) : null}
+                      {job?.phase === 'done' && !status.found ? (
+                        <p className="text-xs text-destructive mt-1 whitespace-normal">
+                          Install finished, but the program was not found.
+                        </p>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex items-center justify-end gap-1">
@@ -212,14 +259,14 @@ export function ProgramsPanel() {
                           <Button
                             size="sm"
                             onClick={() => handleInstall(id)}
-                            disabled={installingId === id}
+                            disabled={active}
                           >
-                            {installingId === id ? (
+                            {active ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <Download className="h-4 w-4" />
                             )}
-                            Install
+                            {active ? 'Installing' : 'Install'}
                           </Button>
                         ) : null}
                         {status.definition.url ? (
