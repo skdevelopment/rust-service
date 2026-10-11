@@ -23,15 +23,13 @@ export function ThemeToggle() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="h-8 w-8">
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-8" />}>
           {resolvedTheme === 'dark' ? (
             <Moon className="h-4 w-4" />
           ) : (
             <Sun className="h-4 w-4" />
           )}
           <span className="sr-only">Toggle theme</span>
-        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem 

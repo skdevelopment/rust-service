@@ -483,9 +483,8 @@ export function EventLogPage() {
                         open={expandedEntry === entry.recordId}
                         onOpenChange={(open) => setExpandedEntry(open ? entry.recordId : null)}
                       >
-                        <Card className={`transition-colors ${getLevelRowClass(entry.levelDisplay)}`}>
-                          <CollapsibleTrigger asChild>
-                            <CardContent className="py-3 cursor-pointer hover:bg-muted/50">
+                        <Card size="sm" className={`transition-colors ${getLevelRowClass(entry.levelDisplay)}`}>
+                          <CollapsibleTrigger render={<CardContent className="cursor-pointer hover:bg-muted/50" />}>
                               <div className="flex items-start gap-3">
                                 <LevelIcon level={entry.levelDisplay} />
                                 <div className="flex-1 min-w-0">
@@ -517,7 +516,6 @@ export function EventLogPage() {
                                   )}
                                 </div>
                               </div>
-                            </CardContent>
                           </CollapsibleTrigger>
                           <CollapsibleContent>
                             <Separator />

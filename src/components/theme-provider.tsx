@@ -12,6 +12,7 @@ import { createContext, useContext, useEffect, useState, ReactNode, useCallback 
 import { invoke } from '@tauri-apps/api/core';
 import { COLOR_SCHEMES } from '@/types/settings';
 import type { ThemeMode, ColorScheme, AppSettings } from '@/types/settings';
+import { applyAppFonts } from '@/lib/fonts';
 
 interface ThemeProviderContextType {
   /** Current theme mode (light/dark/system) */
@@ -101,6 +102,10 @@ export function ThemeProvider({
         } else if (savedScheme) {
           setColorSchemeState('default');
         }
+        applyAppFonts(
+          settings?.appearance?.uiFont ?? '',
+          settings?.appearance?.monoFont ?? '',
+        );
       } catch (error) {
         console.warn('Failed to load theme settings:', error);
       }

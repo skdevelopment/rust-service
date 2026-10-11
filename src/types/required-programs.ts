@@ -17,6 +17,8 @@ export interface RequiredProgramDef {
   exeNames: string[];
   /** Download/info URL (optional) */
   url?: string;
+  /** Direct unattended download URL */
+  downloadUrl?: string;
 }
 
 /** Status of a required program */

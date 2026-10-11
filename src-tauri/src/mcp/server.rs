@@ -76,6 +76,34 @@ impl JsonRpcResponse {
     }
 }
 
+fn json_bytes<T: Serialize>(value: &T) -> Bytes {
+    serde_json::to_vec(value)
+        .map(Bytes::from)
+        .unwrap_or_else(|_| Bytes::from(r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"serialize failed"},"id":null}"#))
+}
+
+fn http_response(status: StatusCode, body: impl Into<Bytes>) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(BoxBody::new(body.into()))
+        .unwrap_or_else(|_| Response::new(BoxBody::new(Bytes::from(r#"{"error":"response build failed"}"#))))
+}
+
+fn cors_preflight() -> Response<BoxBody> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .header(
+            "Access-Control-Allow-Headers",
+            "Authorization, Content-Type",
+        )
+        .body(BoxBody::new(Bytes::new()))
+        .unwrap_or_else(|_| Response::new(BoxBody::new(Bytes::new())))
+}
+
 // =============================================================================
 // Tool Definitions for tools/list
 // =============================================================================
@@ -312,26 +340,12 @@ async fn handle_mcp_request(
             "version": "1.0.0",
             "tools_available": 11
         });
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(response.to_string())))
-            .unwrap());
+        return Ok(http_response(StatusCode::OK, response.to_string()));
     }
 
     // Handle CORS preflight
     if method == Method::OPTIONS {
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Access-Control-Allow-Origin", "*")
-            .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            .header(
-                "Access-Control-Allow-Headers",
-                "Authorization, Content-Type",
-            )
-            .body(BoxBody::new(Bytes::new()))
-            .unwrap());
+        return Ok(cors_preflight());
     }
 
     // Check authorization for /mcp endpoint
@@ -340,37 +354,25 @@ async fn handle_mcp_request(
 
     if auth_header.map(|h| h.to_str().ok()) != Some(Some(expected.as_str())) {
         eprintln!("MCP: Unauthorized request to {}", path);
-        return Ok(Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Unauthorized - Bearer token required"}"#,
-            )))
-            .unwrap());
+        return Ok(http_response(
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":"Unauthorized - Bearer token required"}"#,
+        ));
     }
 
     // Only accept POST to /mcp
     if path != "/mcp" {
-        return Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Not Found - use POST /mcp"}"#,
-            )))
-            .unwrap());
+        return Ok(http_response(
+            StatusCode::NOT_FOUND,
+            r#"{"error":"Not Found - use POST /mcp"}"#,
+        ));
     }
 
     if method != Method::POST {
-        return Ok(Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Method not allowed - use POST"}"#,
-            )))
-            .unwrap());
+        return Ok(http_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            r#"{"error":"Method not allowed - use POST"}"#,
+        ));
     }
 
     // Collect request body
@@ -383,14 +385,7 @@ async fn handle_mcp_request(
                 "Failed to read request body",
                 serde_json::Value::Null,
             );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(BoxBody::new(Bytes::from(
-                    serde_json::to_string(&response).unwrap(),
-                )))
-                .unwrap());
+            return Ok(http_response(StatusCode::BAD_REQUEST, json_bytes(&response)));
         }
     };
 
@@ -404,14 +399,7 @@ async fn handle_mcp_request(
                 "Parse error - invalid JSON",
                 serde_json::Value::Null,
             );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(BoxBody::new(Bytes::from(
-                    serde_json::to_string(&response).unwrap(),
-                )))
-                .unwrap());
+            return Ok(http_response(StatusCode::BAD_REQUEST, json_bytes(&response)));
         }
     };
 
@@ -480,14 +468,7 @@ async fn handle_mcp_request(
         }
     };
 
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "application/json")
-        .header("Access-Control-Allow-Origin", "*")
-        .body(BoxBody::new(Bytes::from(
-            serde_json::to_string(&response).unwrap(),
-        )))
-        .unwrap())
+    Ok(http_response(StatusCode::OK, json_bytes(&response)))
 }
 
 // =============================================================================

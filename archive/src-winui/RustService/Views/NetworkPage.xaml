@@ -1,0 +1,65 @@
+<Page x:Class="RustService.Views.NetworkPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="Transparent">
+    <Pivot>
+        <PivotItem Header="Overview">
+            <Grid Padding="16" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <CommandBar DefaultLabelPosition="Right">
+                    <AppBarButton Icon="Refresh" Label="Refresh interfaces" Click="Ifaces_Click"/>
+                    <AppBarButton Icon="Globe" Label="Wi-Fi" Click="Wifi_Click"/>
+                </CommandBar>
+                <GridView x:Name="Cards" Grid.Row="1" ItemTemplate="{StaticResource CardItemTemplate}"/>
+                <TextBox x:Name="OverviewOut" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </Grid>
+        </PivotItem>
+        <PivotItem Header="Ping">
+            <StackPanel Padding="16" Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBox x:Name="PingHost" Header="Host" Text="google.com" Width="220"/>
+                    <NumberBox x:Name="PingCount" Header="Count" Value="4" Minimum="1" Maximum="20" Width="100"/>
+                    <Button Content="Ping" Click="Ping_Click" Style="{StaticResource AccentButtonStyle}"/>
+                </StackPanel>
+                <TextBox x:Name="PingOut" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas" MinHeight="200"/>
+            </StackPanel>
+        </PivotItem>
+        <PivotItem Header="Trace">
+            <StackPanel Padding="16" Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBox x:Name="TraceHost" Header="Host" Text="google.com" Width="220"/>
+                    <Button Content="Trace route" Click="Trace_Click" Style="{StaticResource AccentButtonStyle}"/>
+                </StackPanel>
+                <TextBox x:Name="TraceOut" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas" MinHeight="200"/>
+            </StackPanel>
+        </PivotItem>
+        <PivotItem Header="DNS">
+            <StackPanel Padding="16" Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBox x:Name="DnsHost" Header="Query" Text="google.com" Width="220"/>
+                    <ComboBox x:Name="DnsType" Header="Type" Width="100" SelectedIndex="0">
+                        <ComboBoxItem Content="A"/>
+                        <ComboBoxItem Content="AAAA"/>
+                        <ComboBoxItem Content="MX"/>
+                        <ComboBoxItem Content="NS"/>
+                        <ComboBoxItem Content="TXT"/>
+                    </ComboBox>
+                    <Button Content="Lookup" Click="Dns_Click" Style="{StaticResource AccentButtonStyle}"/>
+                </StackPanel>
+                <TextBox x:Name="DnsOut" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas" MinHeight="200"/>
+            </StackPanel>
+        </PivotItem>
+        <PivotItem Header="Wi-Fi">
+            <StackPanel Padding="16" Spacing="8">
+                <Button Content="Refresh Wi-Fi" Click="Wifi_Click"/>
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <TextBox x:Name="WifiOut" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent"/>
+                </Border>
+            </StackPanel>
+        </PivotItem>
+    </Pivot>
+</Page>

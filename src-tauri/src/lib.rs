@@ -13,6 +13,7 @@
 #[allow(hidden_glob_reexports)]
 mod commands;
 pub mod error;
+mod lock;
 mod mcp;
 mod services;
 mod types;
@@ -56,6 +57,9 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::update_setting,
+            commands::get_system_fonts,
+            commands::get_bundled_fonts,
+            commands::get_font_css_binding,
             commands::open_folder,
             commands::open_shortcut,
             commands::get_system_info,
@@ -105,6 +109,7 @@ pub fn run() {
             commands::get_required_programs,
             commands::get_required_programs_by_ids,
             commands::get_required_programs_status,
+            commands::install_required_program,
             commands::set_program_path_override,
             commands::get_program_exe_path,
             commands::validate_required_programs,
@@ -152,6 +157,7 @@ pub fn run() {
             commands::search_tavily,
             commands::search_searxng,
             commands::get_agent_settings,
+            commands::get_machine_id,
             commands::get_command_history,
             commands::agent_read_file,
             commands::agent_write_file,
@@ -188,5 +194,6 @@ pub fn run() {
             commands::create_restore_point
         ])
         .run(tauri::generate_context!())
+        // Fatal: without a running event loop the desktop app cannot start.
         .expect("error while running tauri application");
 }

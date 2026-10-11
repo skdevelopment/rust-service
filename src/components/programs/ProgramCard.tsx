@@ -69,8 +69,8 @@ export function ProgramCard({
   }, [program.iconPath]);
 
   return (
-    <Card className="group hover:shadow-md transition-all duration-200 hover:border-primary/50 w-full">
-      <CardContent className="p-3 py-0">
+    <Card size="sm" className="group hover:shadow-md transition-all duration-200 hover:border-primary/50 w-full">
+      <CardContent>
         <div className="flex items-start gap-3">
           {/* Icon */}
           <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -113,27 +113,27 @@ export function ProgramCard({
 
           {/* Actions */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <TooltipProvider delayDuration={300}>
+            <TooltipProvider delay={300}>
               {program.isCli ? (
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" disabled className="h-8 w-8">
+                  <TooltipTrigger render={<Button variant="ghost" size="icon" disabled className="h-8 w-8" />}>
                       <Play className="h-4 w-4" />
-                    </Button>
                   </TooltipTrigger>
                   <TooltipContent>CLI tools cannot be launched from GUI</TooltipContent>
                 </Tooltip>
               ) : (
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
-                      onClick={() => onLaunch(program.id)}
-                    >
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
+                        onClick={() => onLaunch(program.id)}
+                      />
+                    }
+                  >
                       <Play className="h-4 w-4" />
-                    </Button>
                   </TooltipTrigger>
                   <TooltipContent>Launch</TooltipContent>
                 </Tooltip>
@@ -141,10 +141,8 @@ export function ProgramCard({
             </TooltipProvider>
 
             <DropdownMenu>
-              <DropdownMenuTrigger>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
                   <MoreVertical className="h-4 w-4" />
-                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => onEdit(program)}>

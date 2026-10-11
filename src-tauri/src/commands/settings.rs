@@ -2,8 +2,16 @@
 
 use std::fs;
 
-use crate::commands::get_data_dir_path;
+use crate::commands::{canonicalize_stored_font, get_data_dir_path};
 use crate::types::{migrate_settings, AppSettings};
+
+fn canonicalize_font_settings(mut settings: AppSettings) -> AppSettings {
+    settings.appearance.ui_font =
+        canonicalize_stored_font(&settings.appearance.ui_font, false);
+    settings.appearance.mono_font =
+        canonicalize_stored_font(&settings.appearance.mono_font, true);
+    settings
+}
 
 /// Retrieves the current application settings
 ///
@@ -63,7 +71,7 @@ pub fn get_settings() -> Result<AppSettings, String> {
     };
 
     // Apply any necessary migrations
-    let migrated = migrate_settings(settings);
+    let migrated = canonicalize_font_settings(migrate_settings(settings));
 
     // Save migrated settings if version changed
     let _ = save_settings_internal(&migrated);
@@ -93,7 +101,7 @@ fn save_settings_internal(settings: &AppSettings) -> Result<(), String> {
 /// human-readable, pretty-printed JSON format.
 #[tauri::command]
 pub fn save_settings(settings: AppSettings) -> Result<(), String> {
-    save_settings_internal(&settings)
+    save_settings_internal(&canonicalize_font_settings(settings))
 }
 
 /// Updates a single setting value by key path
@@ -119,6 +127,16 @@ pub fn update_setting(key: String, value: String) -> Result<AppSettings, String>
         ["appearance", "enableAnimations"] => {
             settings.appearance.enable_animations = serde_json::from_str(&value)
                 .map_err(|e| format!("Invalid enableAnimations value: {}", e))?;
+        }
+        ["appearance", "uiFont"] => {
+            let raw: String = serde_json::from_str(&value)
+                .map_err(|e| format!("Invalid uiFont value: {}", e))?;
+            settings.appearance.ui_font = crate::commands::canonicalize_stored_font(&raw, false);
+        }
+        ["appearance", "monoFont"] => {
+            let raw: String = serde_json::from_str(&value)
+                .map_err(|e| format!("Invalid monoFont value: {}", e))?;
+            settings.appearance.mono_font = crate::commands::canonicalize_stored_font(&raw, true);
         }
         ["data", "logLevel"] => {
             settings.data.log_level = serde_json::from_str(&value)
@@ -274,4 +292,82 @@ pub fn get_business_logo(logo_path: String) -> Result<Option<String>, String> {
     };
 
     Ok(Some(format!("data:{};base64,{}", mime, base64_data)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::data_dir::with_exclusive_data_dir;
+
+    fn with_temp_data_dir<R>(f: impl FnOnce() -> R) -> R {
+        let dir = tempfile::tempdir().expect("temp data dir");
+        with_exclusive_data_dir(dir.path().to_path_buf(), f)
+    }
+
+    #[test]
+    fn update_setting_should_round_trip_ui_and_mono_fonts_through_temp_data_dir() {
+        with_temp_data_dir(|| {
+            let ui_value = serde_json::to_string("Inter").expect("json ui font");
+            let mono_value = serde_json::to_string("JetBrains Mono").expect("json mono font");
+
+            let after_ui = update_setting("appearance.uiFont".to_string(), ui_value)
+                .expect("write uiFont");
+            assert_eq!(after_ui.appearance.ui_font, "Inter");
+
+            let after_mono = update_setting("appearance.monoFont".to_string(), mono_value)
+                .expect("write monoFont");
+            assert_eq!(after_mono.appearance.ui_font, "Inter");
+            assert_eq!(after_mono.appearance.mono_font, "JetBrains Mono");
+
+            let loaded = get_settings().expect("read settings back");
+            assert_eq!(loaded.appearance.ui_font, "Inter");
+            assert_eq!(loaded.appearance.mono_font, "JetBrains Mono");
+        });
+    }
+
+    #[test]
+    fn update_setting_should_persist_empty_fonts_as_default() {
+        with_temp_data_dir(|| {
+            update_setting(
+                "appearance.uiFont".to_string(),
+                serde_json::to_string("Inter").expect("json"),
+            )
+            .expect("set ui font");
+            update_setting(
+                "appearance.uiFont".to_string(),
+                serde_json::to_string("").expect("json empty"),
+            )
+            .expect("clear ui font");
+
+            let loaded = get_settings().expect("read settings");
+            assert_eq!(loaded.appearance.ui_font, "");
+        });
+    }
+
+    #[test]
+    fn update_setting_should_drop_os_font_names_not_in_the_bundled_catalog() {
+        with_temp_data_dir(|| {
+            let updated = update_setting(
+                "appearance.uiFont".to_string(),
+                serde_json::to_string("Segoe UI").expect("json"),
+            )
+            .expect("write unknown ui font");
+            assert_eq!(updated.appearance.ui_font, "");
+            let updated = update_setting(
+                "appearance.monoFont".to_string(),
+                serde_json::to_string("Consolas").expect("json"),
+            )
+            .expect("write unknown mono font");
+            assert_eq!(updated.appearance.mono_font, "");
+        });
+    }
+
+    #[test]
+    fn update_setting_should_reject_unknown_key() {
+        with_temp_data_dir(|| {
+            let err = update_setting("appearance.notAKey".to_string(), "\"x\"".to_string())
+                .expect_err("unknown key");
+            assert!(err.contains("Unknown setting key"), "{err}");
+        });
+    }
 }

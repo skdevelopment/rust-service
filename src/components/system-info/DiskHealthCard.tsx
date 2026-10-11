@@ -33,7 +33,7 @@ export function DiskHealthCard({ disk }: { disk: DiskHealthInfo }) {
     (disk.temperatureC !== null && disk.temperatureC > 55);
 
   return (
-    <Card className={hasWarning && disk.healthPassed ? 'border-yellow-500/40' : !disk.healthPassed ? 'border-red-500/40' : ''}>
+    <Card size="sm" className={hasWarning && disk.healthPassed ? 'border-yellow-500/40' : !disk.healthPassed ? 'border-red-500/40' : ''}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-medium truncate max-w-[70%]">
@@ -94,11 +94,11 @@ export function DiskHealthCard({ disk }: { disk: DiskHealthInfo }) {
           <>
             <Separator className="my-2" />
             <Collapsible open={expanded} onOpenChange={setExpanded}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground">
+              <CollapsibleTrigger
+                render={<Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground" />}
+              >
                   All S.M.A.R.T. Attributes ({disk.attributes.length})
                   {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </Button>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <ScrollArea className="h-48 mt-2">

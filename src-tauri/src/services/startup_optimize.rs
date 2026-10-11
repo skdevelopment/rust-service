@@ -17,8 +17,7 @@ use tauri::{AppHandle, Emitter};
 use crate::commands::get_settings;
 use crate::commands::startup::{
     get_registry_startup_items_sync, get_scheduled_startup_tasks_sync,
-    get_startup_folder_items_sync, toggle_registry_startup_item_sync,
-    toggle_scheduled_task_sync, StartupItem, StartupSource,
+    get_startup_folder_items_sync, toggle_startup_item_sync, StartupItem,
 };
 use crate::services::Service;
 use crate::types::{
@@ -629,28 +628,7 @@ impl Service for StartupOptimizeService {
             for &idx in &unnecessary_enabled {
                 let item = &items[idx];
 
-                // Skip startup folder items (require deletion)
-                if item.source == StartupSource::StartupFolderUser
-                    || item.source == StartupSource::StartupFolderAllUsers
-                {
-                    emit_log(
-                        &format!(
-                            "Skipping '{}' (startup folder item — remove manually)",
-                            item.name
-                        ),
-                        &mut logs,
-                        app,
-                    );
-                    continue;
-                }
-
-                let result = if item.id.starts_with("reg_") {
-                    toggle_registry_startup_item_sync(&item.id[4..], false)
-                } else if item.id.starts_with("task_") {
-                    toggle_scheduled_task_sync(&item.id[5..], false)
-                } else {
-                    Err(format!("Unknown item type: {}", item.id))
-                };
+                let result = toggle_startup_item_sync(&item.id, false);
 
                 match result {
                     Ok(()) => {

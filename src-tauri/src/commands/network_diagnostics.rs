@@ -167,10 +167,9 @@ pub async fn get_detailed_network_info() -> Result<Vec<NetworkInterfaceDetails>,
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| format!("Failed to parse network info: {}", e))?;
 
-    let adapters: Vec<serde_json::Value> = if parsed.is_array() {
-        parsed.as_array().unwrap().clone()
-    } else {
-        vec![parsed]
+    let adapters: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
     };
 
     let mut interfaces = Vec::new();

@@ -181,8 +181,8 @@ function ReportCard({ report, onView, onDelete }: ReportCardProps) {
   const totalCount = report.results.length;
 
   return (
-    <Card className="group hover:shadow-md transition-all duration-200 hover:border-primary/50">
-      <CardContent className="p-4 py-0">
+    <Card size="sm" className="group hover:shadow-md transition-all duration-200 hover:border-primary/50">
+      <CardContent>
         <div className="flex items-start gap-4">
           {/* Status Icon */}
           <div className={`p-3 rounded-xl border ${statusInfo.bgColor}`}>

@@ -276,7 +276,7 @@ export function ServicePresetsPanel() {
           const isBuiltinPreset = isBuiltin(preset.id);
 
           return (
-            <Card key={preset.id} className="overflow-hidden">
+            <Card size="sm" key={preset.id} className="overflow-hidden">
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div

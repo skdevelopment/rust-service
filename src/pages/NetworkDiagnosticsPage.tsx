@@ -264,7 +264,7 @@ export function NetworkDiagnosticsPage() {
                 <h3 className="text-lg font-semibold">Network Interfaces</h3>
                 <div className="grid gap-4 md:grid-cols-2">
                   {interfaces.map((iface, index) => (
-                    <Card key={index}>
+                    <Card size="sm" key={index}>
                       <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
                           <CardTitle className="text-base font-medium">{iface.name}</CardTitle>

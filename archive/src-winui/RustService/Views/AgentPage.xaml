@@ -1,0 +1,76 @@
+<Page x:Class="RustService.Views.AgentPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="Transparent">
+    <Grid Padding="16" ColumnSpacing="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="340"/>
+        </Grid.ColumnDefinitions>
+        <Grid RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <CommandBar DefaultLabelPosition="Right">
+                <AppBarButton Icon="Add" Label="New chat" Click="New_Click"/>
+                <AppBarButton Icon="Edit" Label="Rename" Click="Rename_Click"/>
+                <AppBarButton Icon="Delete" Label="Delete chat" Click="DeleteChat_Click"/>
+                <CommandBar.Content>
+                    <ComboBox x:Name="ConvoBox" Width="240" Margin="8,0" SelectionChanged="ConvoBox_SelectionChanged"/>
+                </CommandBar.Content>
+            </CommandBar>
+            <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}">
+                <TextBox x:Name="Transcript" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent"/>
+            </Border>
+            <Grid Grid.Row="2" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="InputBox" PlaceholderText="Message the technician agent or queue a command"/>
+                <Button Grid.Column="1" Content="Send" Click="Send_Click" Style="{StaticResource AccentButtonStyle}"/>
+                <Button Grid.Column="2" Content="Queue command" Click="Queue_Click"/>
+            </Grid>
+        </Grid>
+        <ScrollViewer Grid.Column="1">
+            <StackPanel Spacing="8">
+                <TextBlock Text="Pending commands" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                <ListView x:Name="PendingList" Height="140" ItemTemplate="{StaticResource CardItemTemplate}"/>
+                <CommandBar DefaultLabelPosition="Right">
+                    <AppBarButton Icon="Accept" Label="Approve" Click="Approve_Click"/>
+                    <AppBarButton Icon="Cancel" Label="Reject" Click="Reject_Click"/>
+                    <AppBarButton Icon="Clear" Label="Clear" Click="ClearPending_Click"/>
+                </CommandBar>
+                <TextBlock Text="Memory" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                <TextBox x:Name="MemoryBox" Header="Fact / solution / instruction"/>
+                <ComboBox x:Name="MemoryTypeBox" SelectedIndex="0" Width="160" SelectionChanged="MemoryType_Changed">
+                    <ComboBoxItem Content="all" IsSelected="True"/>
+                    <ComboBoxItem Content="fact"/>
+                    <ComboBoxItem Content="solution"/>
+                    <ComboBoxItem Content="instruction"/>
+                    <ComboBoxItem Content="conversation"/>
+                </ComboBox>
+                <TextBox x:Name="MemoryQueryBox" Header="Search memories" TextChanged="MemorySearch_Changed"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Save memory" Click="SaveMemory_Click"/>
+                    <Button Content="Delete memory" Click="DeleteMemory_Click"/>
+                </StackPanel>
+                <ListView x:Name="MemoryList" Height="120" ItemTemplate="{StaticResource CardItemTemplate}"/>
+                <TextBlock Text="Files" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                <TextBox x:Name="FilePathBox" Header="Path"/>
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button Content="Read" Click="ReadFile_Click"/>
+                    <Button Content="List dir" Click="ListDir_Click"/>
+                    <Button Content="Grep" Click="Grep_Click"/>
+                    <Button Content="Glob" Click="Glob_Click"/>
+                    <Button Content="Write" Click="WriteFile_Click"/>
+                    <Button Content="Save transcript" Click="SaveTranscript_Click"/>
+                </StackPanel>
+                <TextBox x:Name="FileOut" Height="120" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

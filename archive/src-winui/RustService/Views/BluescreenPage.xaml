@@ -1,0 +1,31 @@
+<Page x:Class="RustService.Views.BluescreenPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="Transparent">
+    <Grid Padding="16" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="180"/>
+        </Grid.RowDefinitions>
+        <CommandBar DefaultLabelPosition="Right">
+            <AppBarButton Icon="Refresh" Label="Refresh" Click="Refresh_Click"/>
+            <AppBarButton Icon="Copy" Label="Copy details" Click="Copy_Click"/>
+            <AppBarButton Icon="Delete" Label="Delete dump" Click="Delete_Click"/>
+            <CommandBar.Content>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="8,0">
+                    <TextBox x:Name="SearchBox" Header="Search stop code / module" Width="220" TextChanged="Search_Changed"/>
+                    <ComboBox x:Name="SortBox" Header="Sort" Width="160" SelectionChanged="Sort_Changed">
+                        <ComboBoxItem Content="Newest" Tag="newest" IsSelected="True"/>
+                        <ComboBoxItem Content="Oldest" Tag="oldest"/>
+                        <ComboBoxItem Content="Stop code" Tag="code"/>
+                    </ComboBox>
+                </StackPanel>
+            </CommandBar.Content>
+        </CommandBar>
+        <TextBlock x:Name="StatsText" Grid.Row="1" TextWrapping="Wrap"/>
+        <ListView x:Name="List" Grid.Row="2" SelectionChanged="List_SelectionChanged" ItemTemplate="{StaticResource CardItemTemplate}"/>
+        <TextBox x:Name="DetailsBox" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
+    </Grid>
+</Page>

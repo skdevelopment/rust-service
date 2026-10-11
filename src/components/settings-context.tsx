@@ -24,6 +24,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { invoke } from '@tauri-apps/api/core';
 import type { AppSettings, SettingKey, SettingValueType } from '@/types/settings';
 import { DEFAULT_SETTINGS } from '@/types/settings';
+import { applyAppFonts } from '@/lib/fonts';
 
 // =============================================================================
 // Context Types
@@ -79,6 +80,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setError(null);
       const loaded = await invoke<AppSettings>('get_settings');
       setSettings(loaded);
+      applyAppFonts(
+        loaded.appearance?.uiFont ?? '',
+        loaded.appearance?.monoFont ?? '',
+      );
     } catch (e) {
       console.error('Failed to load settings:', e);
       setError(e instanceof Error ? e.message : String(e));
@@ -100,6 +105,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         value: JSON.stringify(value),
       });
       setSettings(updated);
+      if (key === 'appearance.uiFont' || key === 'appearance.monoFont') {
+        applyAppFonts(
+          updated.appearance?.uiFont ?? '',
+          updated.appearance?.monoFont ?? '',
+        );
+      }
     } catch (e) {
       console.error(`Failed to update setting ${key}:`, e);
       setError(e instanceof Error ? e.message : String(e));
@@ -112,6 +123,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setError(null);
       await invoke('save_settings', { settings: newSettings });
       setSettings(newSettings);
+      applyAppFonts(
+        newSettings.appearance?.uiFont ?? '',
+        newSettings.appearance?.monoFont ?? '',
+      );
     } catch (e) {
       console.error('Failed to save settings:', e);
       setError(e instanceof Error ? e.message : String(e));

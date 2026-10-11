@@ -9,7 +9,6 @@ import {
   Palette,
   FolderOpen,
   Info,
-  ChevronRight,
   FileText,
   Building2,
   Sparkles,
@@ -20,6 +19,8 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import type { SettingsCategory } from '@/types/settings';
 
 // =============================================================================
@@ -44,70 +45,70 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
     label: 'Appearance',
     description: 'Theme and colors',
     icon: Palette,
-    iconColor: 'text-pink-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'data',
     label: 'Data & Storage',
     description: 'Folders and logs',
     icon: FolderOpen,
-    iconColor: 'text-green-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'reports',
     label: 'Reports',
     description: 'Report settings',
     icon: FileText,
-    iconColor: 'text-blue-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'business',
     label: 'Business',
     description: 'Branding & technicians',
     icon: Building2,
-    iconColor: 'text-orange-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'programs',
     label: 'Required Programs',
     description: 'Service dependencies',
     icon: Package,
-    iconColor: 'text-cyan-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'servicePresets',
     label: 'Service Presets',
     description: 'Preset configurations',
     icon: Layers,
-    iconColor: 'text-amber-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'technicianTabs',
     label: 'Technician Tabs',
     description: 'Custom web tabs',
     icon: Globe,
-    iconColor: 'text-indigo-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'serviceMetrics',
     label: 'Service Metrics',
     description: 'Timing & estimates',
     icon: Timer,
-    iconColor: 'text-teal-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'agent',
     label: 'AI Agent',
     description: 'Provider & execution',
     icon: Sparkles,
-    iconColor: 'text-violet-500',
+    iconColor: 'text-muted-foreground',
   },
   {
     id: 'about',
     label: 'About',
     description: 'Version info',
     icon: Info,
-    iconColor: 'text-purple-500',
+    iconColor: 'text-muted-foreground',
   },
 ];
 
@@ -128,30 +129,27 @@ export function SettingsSidebar({ activeCategory, onCategoryChange }: SettingsSi
         <h2 className="font-semibold">Settings</h2>
       </div>
 
-      <nav className="flex-1 p-2 space-y-1">
+      <nav className="flex-1 p-2 space-y-1" aria-label="Settings">
         {SIDEBAR_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = activeCategory === item.id;
 
           return (
-            <button
+            <Button
               key={item.id}
+              type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => onCategoryChange(item.id)}
-              className={`
-                w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-left
-                transition-colors duration-150
-                ${isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-muted'
-                }
-              `}
-            >
-              <Icon className={`h-4 w-4 ${isActive ? '' : item.iconColor}`} />
-              <span className="text-sm font-medium truncate">{item.label}</span>
-              {isActive && (
-                <ChevronRight className="h-4 w-4 ml-auto flex-shrink-0" />
+              data-active={isActive ? 'true' : undefined}
+              className={cn(
+                'w-full justify-start gap-2 px-2 text-muted-foreground hover:text-foreground',
+                isActive && 'bg-muted text-foreground'
               )}
-            </button>
+            >
+              <Icon className={cn('h-4 w-4', item.iconColor)} />
+              <span className="truncate">{item.label}</span>
+            </Button>
           );
         })}
       </nav>

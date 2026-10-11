@@ -7,7 +7,7 @@
 import {
   Settings,
   Heart,
-  Github,
+  Code2,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -71,7 +71,7 @@ export function AboutPanel() {
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" className="gap-2">
-                <Github className="h-4 w-4" />
+                <Code2 className="h-4 w-4" />
                 GitHub
               </Button>
             </div>

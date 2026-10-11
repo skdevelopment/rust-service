@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::data_dir::get_data_dir_path;
 use super::required_programs::validate_required_programs;
 use super::settings::{get_settings, save_settings};
+use crate::lock::{lock_mutex, wait_condvar};
 use sysinfo::Disks;
 
 use crate::services;
@@ -241,7 +242,7 @@ pub fn validate_service_requirements(
 /// Get current service run state
 #[tauri::command]
 pub fn get_service_run_state() -> ServiceRunState {
-    let state = SERVICE_STATE.lock().unwrap();
+    let state = lock_mutex(&SERVICE_STATE);
     state.clone().unwrap_or_default()
 }
 
@@ -258,7 +259,7 @@ pub async fn run_services(
 
     // Check if already running
     {
-        let state = SERVICE_STATE.lock().unwrap();
+        let state = lock_mutex(&SERVICE_STATE);
         if let Some(ref s) = *state {
             if s.is_running {
                 return Err("A service run is already in progress".to_string());
@@ -321,7 +322,7 @@ pub async fn run_services(
 
     // Update global state
     {
-        let mut state = SERVICE_STATE.lock().unwrap();
+        let mut state = lock_mutex(&SERVICE_STATE);
         *state = Some(ServiceRunState {
             is_running: true,
             is_paused: false,
@@ -353,7 +354,7 @@ pub async fn run_services(
     report.completed_at = Some(Utc::now().to_rfc3339());
     // Check if we were cancelled
     let was_cancelled = {
-        let state = SERVICE_STATE.lock().unwrap();
+        let state = lock_mutex(&SERVICE_STATE);
         state.as_ref().map(|s| !s.is_running).unwrap_or(false)
     };
     report.status = if was_cancelled {
@@ -374,7 +375,7 @@ pub async fn run_services(
 
     // Update global state
     {
-        let mut state = SERVICE_STATE.lock().unwrap();
+        let mut state = lock_mutex(&SERVICE_STATE);
         *state = Some(ServiceRunState {
             is_running: false,
             is_paused: false,
@@ -436,19 +437,19 @@ fn run_services_sequential(
 
 /// Check whether the service run has been cancelled.
 fn is_cancelled() -> bool {
-    let state = SERVICE_STATE.lock().unwrap();
+    let state = lock_mutex(&SERVICE_STATE);
     state.as_ref().is_some_and(|s| !s.is_running)
 }
 
 /// Block the current thread while the service run is paused.
 /// Returns `true` if the run was cancelled while paused.
 fn wait_while_paused() -> bool {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     while state
         .as_ref()
         .is_some_and(|s| s.is_paused && s.is_running)
     {
-        state = PAUSE_CONDVAR.wait(state).unwrap();
+        state = wait_condvar(&PAUSE_CONDVAR, state);
     }
     // Re-check cancellation after resuming
     state.as_ref().is_some_and(|s| !s.is_running)
@@ -456,7 +457,7 @@ fn wait_while_paused() -> bool {
 
 /// Update the currently active service index in global state.
 fn update_current_index(index: usize) {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if let Some(ref mut r) = s.current_report {
             r.current_service_index = Some(index);
@@ -466,7 +467,7 @@ fn update_current_index(index: usize) {
 
 /// Update the active service indices (for parallel mode) in global state.
 fn update_active_indices(indices: &[usize]) {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if let Some(ref mut r) = s.current_report {
             r.current_service_indices = indices.to_vec();
@@ -477,7 +478,7 @@ fn update_active_indices(indices: &[usize]) {
 
 /// Sync the latest results into global state.
 fn sync_results_to_state(results: &[ServiceResult]) {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if let Some(ref mut r) = s.current_report {
             r.results = results.to_vec();
@@ -606,7 +607,7 @@ fn run_services_parallel(
 
         // Collect results from the shared collector
         {
-            let mut collected = results_collector.lock().unwrap();
+            let mut collected = lock_mutex(&results_collector);
             for (idx, result) in collected.drain(..) {
                 if result.success {
                     record_service_metrics(&enabled_queue[idx], result.duration_ms);
@@ -683,12 +684,12 @@ fn run_services_parallel(
                     });
 
                 {
-                    let mut collected = results_tx.lock().unwrap();
+                    let mut collected = lock_mutex(&results_tx);
                     collected.push((index, result));
                 }
 
                 let (lock, cvar) = &*notify;
-                let mut done = lock.lock().unwrap();
+                let mut done = lock_mutex(lock);
                 *done = true;
                 cvar.notify_one();
             });
@@ -699,7 +700,7 @@ fn run_services_parallel(
         // Wait or break if stuck
         if !launched_any && !running.is_empty() {
             let (lock, cvar) = &*notify_pair;
-            let mut done = lock.lock().unwrap();
+            let mut done = lock_mutex(lock);
             if !*done {
                 let _ = cvar.wait_timeout(
                     done,
@@ -725,7 +726,7 @@ fn run_services_parallel(
 
     // Final collection
     {
-        let mut collected = results_collector.lock().unwrap();
+        let mut collected = lock_mutex(&results_collector);
         for (idx, result) in collected.drain(..) {
             if result.success {
                 record_service_metrics(&enabled_queue[idx], result.duration_ms);
@@ -740,7 +741,7 @@ fn run_services_parallel(
 /// Cancel the current service run
 #[tauri::command]
 pub fn cancel_service_run() -> Result<(), String> {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if s.is_running {
             s.is_running = false;
@@ -832,7 +833,7 @@ pub fn clear_all_reports() -> Result<u32, String> {
 /// Pause the current service run (takes effect between services)
 #[tauri::command]
 pub fn pause_service_run(app: AppHandle) -> Result<(), String> {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if s.is_running && !s.is_paused {
             s.is_paused = true;
@@ -850,7 +851,7 @@ pub fn pause_service_run(app: AppHandle) -> Result<(), String> {
 /// Resume a paused service run
 #[tauri::command]
 pub fn resume_service_run(app: AppHandle) -> Result<(), String> {
-    let mut state = SERVICE_STATE.lock().unwrap();
+    let mut state = lock_mutex(&SERVICE_STATE);
     if let Some(ref mut s) = *state {
         if s.is_running && s.is_paused {
             s.is_paused = false;

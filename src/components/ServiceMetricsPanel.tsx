@@ -488,10 +488,10 @@ export function ServiceMetricsPanel() {
               </p>
             </div>
             <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={isClearing || totalSamples === 0}>
+              <AlertDialogTrigger
+                render={<Button variant="destructive" size="sm" disabled={isClearing || totalSamples === 0} />}
+              >
                   {isClearing ? 'Clearing...' : 'Clear All'}
-                </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>

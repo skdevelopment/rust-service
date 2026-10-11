@@ -3,6 +3,7 @@
 //! Commands for managing Windows startup programs from Registry and shell folders.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -76,6 +77,12 @@ pub enum StartupImpact {
 /// Get all startup items from various sources
 #[tauri::command]
 pub async fn get_startup_items() -> Result<Vec<StartupItem>, String> {
+    tokio::task::spawn_blocking(get_startup_items_sync)
+        .await
+        .map_err(|e| format!("Startup items task failed: {e}"))?
+}
+
+pub(crate) fn get_startup_items_sync() -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
 
     match get_registry_startup_items_sync() {
@@ -223,6 +230,12 @@ pub(crate) fn get_registry_startup_items_sync() -> Result<Vec<StartupItem>, Stri
 /// Get startup items from shell startup folders
 pub(crate) fn get_startup_folder_items_sync() -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
+    let user_approved = read_startup_approved_map(
+        r"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+    );
+    let machine_approved = read_startup_approved_map(
+        r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+    );
 
     // User startup folder
     if let Some(user_folder) = dirs::data_local_dir() {
@@ -236,6 +249,7 @@ pub(crate) fn get_startup_folder_items_sync() -> Result<Vec<StartupItem>, String
         items.extend(scan_startup_folder(
             &startup_path,
             StartupSource::StartupFolderUser,
+            &user_approved,
         )?);
     }
 
@@ -245,13 +259,18 @@ pub(crate) fn get_startup_folder_items_sync() -> Result<Vec<StartupItem>, String
     items.extend(scan_startup_folder(
         &all_users_startup,
         StartupSource::StartupFolderAllUsers,
+        &machine_approved,
     )?);
 
     Ok(items)
 }
 
 /// Scan a startup folder for items
-fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<StartupItem>, String> {
+fn scan_startup_folder(
+    path: &PathBuf,
+    source: StartupSource,
+    approved: &HashMap<String, bool>,
+) -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
 
     if !path.exists() {
@@ -278,6 +297,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
         let impact = estimate_impact(&name, &command);
         let publisher = get_file_publisher(Some(&command));
         let source_location = path.to_string_lossy().to_string();
+        let enabled = approved_enabled_for(&file_name, approved);
 
         items.push(StartupItem {
             id: format!("folder_{}", sanitize_id(&name)),
@@ -285,7 +305,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
             path: Some(command.clone()),
             source: source.clone(),
             source_location,
-            enabled: true, // Folder items are always "enabled" if they exist
+            enabled,
             publisher,
             description: None,
             impact,
@@ -377,76 +397,184 @@ pub(crate) fn get_scheduled_startup_tasks_sync() -> Result<Vec<StartupItem>, Str
 /// Toggle a startup item's enabled state
 #[tauri::command]
 pub async fn toggle_startup_item(id: String, enabled: bool) -> Result<(), String> {
-    // Parse the ID to determine the source
-    if let Some(rest) = id.strip_prefix("reg_") {
-        toggle_registry_startup_item_sync(rest, enabled)
-    } else if let Some(rest) = id.strip_prefix("task_") {
-        toggle_scheduled_task_sync(rest, enabled)
+    tokio::task::spawn_blocking(move || toggle_startup_item_sync(&id, enabled))
+        .await
+        .map_err(|e| format!("Toggle task failed: {e}"))?
+}
+
+/// Look up the live item by id and persist enable/disable in the OS mechanism Windows reads.
+pub(crate) fn toggle_startup_item_sync(id: &str, enabled: bool) -> Result<(), String> {
+    if id.starts_with("reg_") {
+        let items = get_registry_startup_items_sync()?;
+        let item = items
+            .into_iter()
+            .find(|i| i.id == id)
+            .ok_or_else(|| format!("Startup item not found: {id}"))?;
+        toggle_registry_startup_item_sync(
+            &item.name,
+            enabled,
+            &item.source,
+            &item.source_location,
+        )
     } else if id.starts_with("folder_") {
-        Err("Startup folder items cannot be disabled - delete them instead".to_string())
+        let items = get_startup_folder_items_sync()?;
+        let item = items
+            .into_iter()
+            .find(|i| i.id == id)
+            .ok_or_else(|| format!("Startup item not found: {id}"))?;
+        toggle_folder_startup_item_sync(&item, enabled)
+    } else if id.starts_with("task_") {
+        let items = get_scheduled_startup_tasks_sync()?;
+        let item = items
+            .into_iter()
+            .find(|i| i.id == id)
+            .ok_or_else(|| format!("Startup item not found: {id}"))?;
+        toggle_scheduled_task_sync(&item.name, enabled)
     } else {
-        Err(format!("Unknown startup item type: {}", id))
+        Err(format!("Unknown startup item type: {id}"))
     }
 }
 
-/// Toggle a registry startup item
-pub(crate) fn toggle_registry_startup_item_sync(name: &str, enabled: bool) -> Result<(), String> {
-    // We use the StartupApproved registry key to enable/disable
-    let safe_name = escape_powershell_single_quote(name);
-    let script = if enabled {
-        format!(
-            r#"
-            # Try HKCU first, then HKLM
-            $paths = @(
-                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run',
-                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-            )
-            foreach ($path in $paths) {{
-                if (Test-Path $path) {{
-                    $item = Get-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-                    if ($item) {{
-                        # Set bytes to enable (starts with 02)
-                        $bytes = [byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0)
-                        Set-ItemProperty -Path $path -Name '{}' -Value $bytes -Force
-                        break
-                    }}
-                }}
-            }}
-            "#,
-            safe_name, safe_name
-        )
-    } else {
-        format!(
-            r#"
-            # Try HKCU first, then HKLM
-            $paths = @(
-                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run',
-                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-            )
-            foreach ($path in $paths) {{
-                if (Test-Path $path) {{
-                    $item = Get-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-                    if ($item) {{
-                        # Set bytes to disable (starts with 03)
-                        $bytes = [byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)
-                        Set-ItemProperty -Path $path -Name '{}' -Value $bytes -Force
-                        break
-                    }}
-                }}
-            }}
-            "#,
-            safe_name, safe_name
-        )
+fn startup_approved_run_key(source: &StartupSource, source_location: &str) -> String {
+    let hive = match source {
+        StartupSource::RegistryLocalMachine => "HKLM",
+        _ => "HKCU",
     };
+    let leaf = if source_location.to_ascii_lowercase().contains("runonce") {
+        "RunOnce"
+    } else {
+        "Run"
+    };
+    format!(r"{hive}:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\{leaf}")
+}
+
+/// Toggle a registry startup item by creating/updating StartupApproved (byte 2=on, 3=off).
+pub(crate) fn toggle_registry_startup_item_sync(
+    name: &str,
+    enabled: bool,
+    source: &StartupSource,
+    source_location: &str,
+) -> Result<(), String> {
+    let key = startup_approved_run_key(source, source_location);
+    set_startup_approved(&key, name, enabled)
+}
+
+fn toggle_folder_startup_item_sync(item: &StartupItem, enabled: bool) -> Result<(), String> {
+    let file_name = std::path::Path::new(&item.command)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Startup folder item has no file name".to_string())?;
+    let key = match item.source {
+        StartupSource::StartupFolderUser => {
+            r"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+        }
+        StartupSource::StartupFolderAllUsers => {
+            r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+        }
+        _ => return Err("Not a startup-folder item".to_string()),
+    };
+    set_startup_approved(key, file_name, enabled)
+}
+
+fn approved_enabled_for(name: &str, map: &HashMap<String, bool>) -> bool {
+    map.iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, enabled)| *enabled)
+        .unwrap_or(true)
+}
+
+fn read_startup_approved_map(ps_path: &str) -> HashMap<String, bool> {
+    let safe_path = escape_powershell_single_quote(ps_path);
+    let script = format!(
+        r#"
+        $item = Get-ItemProperty -LiteralPath '{safe_path}' -ErrorAction SilentlyContinue
+        if (-not $item) {{ Write-Output '[]'; exit 0 }}
+        $rows = @()
+        foreach ($prop in $item.PSObject.Properties) {{
+            if ($prop.Name -like 'PS*') {{ continue }}
+            $bytes = $prop.Value
+            $enabled = $true
+            if ($bytes -is [byte[]] -and $bytes.Length -gt 0) {{
+                $enabled = ($bytes[0] -eq 2)
+            }} elseif ($null -ne $bytes) {{
+                try {{
+                    $arr = [byte[]]$bytes
+                    if ($arr.Length -gt 0) {{ $enabled = ($arr[0] -eq 2) }}
+                }} catch {{ }}
+            }}
+            $rows += [PSCustomObject]@{{ Name = $prop.Name; Enabled = [bool]$enabled }}
+        }}
+        if ($rows.Count -eq 0) {{ Write-Output '[]' }} else {{ $rows | ConvertTo-Json -Compress -Depth 2 }}
+        "#
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output();
+    let Ok(output) = output else {
+        return HashMap::new();
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return HashMap::new();
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return HashMap::new(),
+    };
+    let rows = if let Some(arr) = parsed.as_array() {
+        arr.clone()
+    } else {
+        vec![parsed]
+    };
+    let mut map = HashMap::new();
+    for row in rows {
+        if let Some(name) = row.get("Name").and_then(|v| v.as_str()) {
+            map.insert(
+                name.to_string(),
+                row.get("Enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+            );
+        }
+    }
+    map
+}
+
+fn set_startup_approved(ps_key: &str, value_name: &str, enabled: bool) -> Result<(), String> {
+    let flag: u8 = if enabled { 2 } else { 3 };
+    let safe_key = escape_powershell_single_quote(ps_key);
+    let safe_name = escape_powershell_single_quote(value_name);
+    let script = format!(
+        r#"
+        $ErrorActionPreference = 'Stop'
+        $path = '{safe_key}'
+        if (-not (Test-Path -LiteralPath $path)) {{
+            New-Item -Path $path -Force | Out-Null
+        }}
+        $bytes = [byte[]]@({flag},0,0,0,0,0,0,0,0,0,0,0)
+        $existing = Get-ItemProperty -LiteralPath $path -Name '{safe_name}' -ErrorAction SilentlyContinue
+        if ($null -ne $existing) {{
+            Set-ItemProperty -LiteralPath $path -Name '{safe_name}' -Value $bytes -Type Binary -Force
+        }} else {{
+            New-ItemProperty -LiteralPath $path -Name '{safe_name}' -PropertyType Binary -Value $bytes -Force | Out-Null
+        }}
+        $written = (Get-ItemProperty -LiteralPath $path -Name '{safe_name}').'{safe_name}'
+        if ($null -eq $written) {{ throw 'StartupApproved value missing after write' }}
+        $first = [int]$written[0]
+        if ($first -ne {flag}) {{ throw "StartupApproved byte was $first, expected {flag}" }}
+        "#
+    );
 
     let output = Command::new("powershell")
         .args(["-NoProfile", "-Command", &script])
         .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+        .map_err(|e| format!("Failed to execute PowerShell: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to toggle startup item: {}", stderr));
+        return Err(format!(
+            "Failed to toggle startup item: {}",
+            stderr.trim()
+        ));
     }
 
     Ok(())
@@ -759,4 +887,115 @@ fn get_file_publisher(exe_path: Option<&str>) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::panic::{catch_unwind, AssertUnwindSafe, resume_unwind};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn unique_name() -> String {
+        format!("RustServiceStartupTest{}", uuid::Uuid::new_v4().simple())
+    }
+
+    fn run_ps(script: &str) -> Result<(), String> {
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+
+    fn create_hkcu_run(name: &str, command: &str) {
+        let script = format!(
+            "New-ItemProperty -LiteralPath 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run' -Name '{}' -PropertyType String -Value '{}' -Force | Out-Null",
+            escape_powershell_single_quote(name),
+            escape_powershell_single_quote(command),
+        );
+        run_ps(&script).expect("create HKCU Run test value");
+    }
+
+    fn delete_hkcu_run(name: &str) {
+        let safe = escape_powershell_single_quote(name);
+        let script = format!(
+            r#"
+            Remove-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name '{safe}' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name '{safe}' -ErrorAction SilentlyContinue
+            "#
+        );
+        let _ = run_ps(&script);
+    }
+
+    #[test]
+    fn toggle_startup_item_should_disable_hkcu_run_and_read_back_disabled() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let name = unique_name();
+        create_hkcu_run(&name, "rundll32.exe");
+        let id = format!("reg_{}", sanitize_id(&name));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            toggle_startup_item_sync(&id, false).expect("toggle off");
+            let items = get_registry_startup_items_sync().expect("list registry startup");
+            let item = items
+                .iter()
+                .find(|i| i.name.eq_ignore_ascii_case(&name))
+                .unwrap_or_else(|| panic!("test Run value {name} not listed: {items:?}"));
+            assert!(
+                !item.enabled,
+                "expected enabled=false after toggle off, got {item:?}"
+            );
+        }));
+        delete_hkcu_run(&name);
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
+    }
+
+    #[test]
+    fn toggle_startup_item_should_disable_startup_folder_item_and_read_back_disabled() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let name = unique_name();
+        let file_name = format!("{name}.lnk");
+        let dir = dirs::data_local_dir()
+            .expect("local app data")
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup");
+        fs::create_dir_all(&dir).expect("create user startup folder");
+        let path = dir.join(&file_name);
+        fs::write(&path, b"").expect("write dummy startup file");
+        let id = format!("folder_{}", sanitize_id(&name));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            toggle_startup_item_sync(&id, false).expect("toggle folder off");
+            let items = get_startup_folder_items_sync().expect("list folder startup");
+            let item = items
+                .iter()
+                .find(|i| i.name.eq_ignore_ascii_case(&name))
+                .unwrap_or_else(|| panic!("test folder item {name} not listed: {items:?}"));
+            assert!(
+                !item.enabled,
+                "expected folder item enabled=false after toggle off, got {item:?}"
+            );
+        }));
+        let _ = fs::remove_file(&path);
+        let safe = escape_powershell_single_quote(&file_name);
+        let _ = run_ps(&format!(
+            "Remove-ItemProperty -LiteralPath 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder' -Name '{safe}' -ErrorAction SilentlyContinue"
+        ));
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
+    }
 }

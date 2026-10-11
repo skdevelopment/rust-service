@@ -174,7 +174,7 @@ export function ServiceReportView({
         </div>
 
         <div className="flex-1 min-h-0">
-          <TabsContent value="findings" className="h-full mt-0 data-[state=active]:flex flex-col">
+          <TabsContent value="findings" className="h-full mt-0 data-active:flex flex-col">
               <ScrollArea className="flex-1 min-h-0 px-4 py-4">
               <FindingsContent
                 report={localReport}
@@ -187,7 +187,7 @@ export function ServiceReportView({
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="printout" className="h-full mt-0 data-[state=active]:flex flex-col overflow-hidden">
+          <TabsContent value="printout" className="h-full mt-0 data-active:flex flex-col overflow-hidden">
             <div className="px-6 py-4 flex items-center justify-between border-b flex-shrink-0">
               <p className="text-muted-foreground text-sm">
                 Technical report with all details. Print or save as PDF.
@@ -210,7 +210,7 @@ export function ServiceReportView({
             </div>
           </TabsContent>
 
-          <TabsContent value="customer" className="h-full mt-0 data-[state=active]:flex flex-col overflow-hidden">
+          <TabsContent value="customer" className="h-full mt-0 data-active:flex flex-col overflow-hidden">
             <div className="px-6 py-4 flex items-center justify-between border-b flex-shrink-0">
               <p className="text-muted-foreground text-sm">
                 Simplified report for customers. Easy to understand with key findings only.

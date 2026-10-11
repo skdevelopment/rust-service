@@ -147,10 +147,9 @@ pub async fn get_event_log_sources() -> Result<Vec<EventLogSource>, String> {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse log sources: {}", e))?;
 
-    let raw_sources: Vec<serde_json::Value> = if parsed.is_array() {
-        parsed.as_array().unwrap().clone()
-    } else {
-        vec![parsed]
+    let raw_sources: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
     };
 
     let mut sources = Vec::new();
@@ -278,10 +277,9 @@ pub async fn get_event_logs(filter: EventLogFilter) -> Result<Vec<EventLogEntry>
         )
     })?;
 
-    let raw_events: Vec<serde_json::Value> = if parsed.is_array() {
-        parsed.as_array().unwrap().clone()
-    } else {
-        vec![parsed]
+    let raw_events: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
     };
 
     let mut entries = Vec::new();
@@ -457,10 +455,9 @@ pub async fn search_event_logs(
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| format!("Failed to parse search results: {}", e))?;
 
-    let raw_events: Vec<serde_json::Value> = if parsed.is_array() {
-        parsed.as_array().unwrap().clone()
-    } else {
-        vec![parsed]
+    let raw_events: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        other => vec![other],
     };
 
     let mut entries = Vec::new();

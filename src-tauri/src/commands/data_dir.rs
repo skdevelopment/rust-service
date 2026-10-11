@@ -2,13 +2,42 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
+use crate::lock::lock_mutex;
 use crate::types::AppSettings;
+
+static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+static DATA_DIR_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Override the data directory (tests). Pass `None` to restore the default.
+pub fn set_data_dir_override(path: Option<PathBuf>) {
+    *lock_mutex(&DATA_DIR_OVERRIDE) = path;
+}
+
+/// Run `f` with an exclusive data-dir override so parallel tests cannot clobber it.
+pub fn with_exclusive_data_dir<R>(path: PathBuf, f: impl FnOnce() -> R) -> R {
+    let _guard = lock_mutex(&DATA_DIR_TEST_LOCK);
+    set_data_dir_override(Some(path));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            set_data_dir_override(None);
+        }
+    }
+    let _reset = Reset;
+    f()
+}
 
 /// Gets the path to the data directory.
 /// In production, this is adjacent to the executable.
 /// In development, this is in the project root.
+/// Tests may override this via [`set_data_dir_override`].
 pub fn get_data_dir_path() -> PathBuf {
+    if let Some(overridden) = lock_mutex(&DATA_DIR_OVERRIDE).clone() {
+        return overridden;
+    }
+
     // Try to get the executable's directory first (production)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {

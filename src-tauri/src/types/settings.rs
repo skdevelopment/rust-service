@@ -9,7 +9,7 @@ use crate::types::agent::AgentSettings;
 use crate::types::service::ServicePreset;
 
 /// Current settings schema version for migration support
-pub const SETTINGS_VERSION: &str = "0.7.0";
+pub const SETTINGS_VERSION: &str = "0.8.0";
 
 /// Appearance-related settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +23,12 @@ pub struct AppearanceSettings {
     /// Whether animations are enabled
     #[serde(default = "default_animations_enabled")]
     pub enable_animations: bool,
+    /// Installed UI (sans/body) font family. Empty keeps the default stack.
+    #[serde(default)]
+    pub ui_font: String,
+    /// Installed monospace font family. Empty keeps the default stack.
+    #[serde(default)]
+    pub mono_font: String,
 }
 
 fn default_color_scheme() -> String {
@@ -39,6 +45,8 @@ impl Default for AppearanceSettings {
             theme: String::from("system"),
             color_scheme: String::from("default"),
             enable_animations: true,
+            ui_font: String::new(),
+            mono_font: String::new(),
         }
     }
 }

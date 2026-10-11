@@ -218,6 +218,26 @@ export interface AppearanceSettings {
   colorScheme: ColorScheme;
   /** Whether animations are enabled */
   enableAnimations: boolean;
+  /** Bundled UI (sans/body) font family. Empty keeps the default stack. */
+  uiFont: string;
+  /** Bundled monospace font family. Empty keeps the default stack. */
+  monoFont: string;
+}
+
+/** Bundled font family from `get_bundled_fonts`. */
+export interface BundledFont {
+  family: string;
+  isMonospace: boolean;
+}
+
+/** CSS values applied to the document for sans vs mono surfaces. */
+export interface FontCssBinding {
+  sans: string;
+  mono: string;
+  body: string;
+  heading: string;
+  sansVariable: string;
+  monoVariable: string;
 }
 
 /**
@@ -384,6 +404,8 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: 'system',
   colorScheme: 'forge',
   enableAnimations: true,
+  uiFont: '',
+  monoFont: '',
 };
 
 /**
@@ -444,7 +466,7 @@ export const DEFAULT_PRESETS: PresetsSettings = {
  * Default application settings
  */
 export const DEFAULT_SETTINGS: AppSettings = {
-  version: '0.7.0',
+  version: '0.8.0',
   appearance: DEFAULT_APPEARANCE,
   data: DEFAULT_DATA,
   reports: DEFAULT_REPORTS,
@@ -466,6 +488,8 @@ export type SettingKey =
   | 'appearance.theme'
   | 'appearance.colorScheme'
   | 'appearance.enableAnimations'
+  | 'appearance.uiFont'
+  | 'appearance.monoFont'
   | 'data.logLevel'
   | 'reports.autoSaveReports'
   | 'reports.reportRetentionDays'
@@ -492,6 +516,8 @@ export type SettingValueType<K extends SettingKey> =
   K extends 'appearance.theme' ? ThemeMode :
   K extends 'appearance.colorScheme' ? ColorScheme :
   K extends 'appearance.enableAnimations' ? boolean :
+  K extends 'appearance.uiFont' ? string :
+  K extends 'appearance.monoFont' ? string :
   K extends 'data.logLevel' ? LogLevel :
   K extends 'reports.autoSaveReports' ? boolean :
   K extends 'reports.reportRetentionDays' ? number :

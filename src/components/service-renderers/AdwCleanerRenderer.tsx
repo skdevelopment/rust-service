@@ -5,7 +5,7 @@
  * Shows cleanup results with category breakdown.
  */
 
-import { Sparkles, Check, AlertTriangle, FolderOpen, FileX, Settings, Clock, Chrome, FileCode } from 'lucide-react';
+import { Sparkles, Check, AlertTriangle, FolderOpen, FileX, Settings, Clock, Globe, FileCode } from 'lucide-react';
 import { Bar, BarChart, XAxis, YAxis, Cell, LabelList } from 'recharts';
 import {
   ChartContainer,
@@ -201,7 +201,7 @@ function FindingsRenderer({ result, definition }: ServiceRendererProps) {
                 {cat.name === 'Services' && <Settings className="h-4 w-4 text-pink-500" />}
                 {cat.name === 'Tasks' && <Clock className="h-4 w-4 text-orange-500" />}
                 {cat.name === 'DLLs' && <FileCode className="h-4 w-4 text-indigo-500" />}
-                {cat.name.includes('Chromium') && <Chrome className="h-4 w-4 text-blue-500" />}
+                {cat.name.includes('Chromium') && <Globe className="h-4 w-4 text-blue-500" />}
                 <span className="text-sm flex-1 truncate">{cat.name}</span>
                 <span className="text-sm font-medium">{cat.count}</span>
               </div>

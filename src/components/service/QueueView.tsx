@@ -378,10 +378,8 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
           />
         </div>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8 px-2">
+          <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="h-8 px-2" />}>
               <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onQueueChange(queue.map(q => ({ ...q, enabled: true })))}>
@@ -471,13 +469,13 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
                 {/* Disabled Services (Collapsible) */}
                 {disabledQueue.length > 0 && (
                   <Collapsible open={disabledOpen} onOpenChange={setDisabledOpen}>
-                    <CollapsibleTrigger asChild>
-                      <button className="flex items-center gap-2 w-full px-1 py-1.5 hover:bg-muted/50 rounded-md transition-colors">
+                    <CollapsibleTrigger
+                      render={<button className="flex items-center gap-2 w-full px-1 py-1.5 hover:bg-muted/50 rounded-md transition-colors" />}
+                    >
                         <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${disabledOpen ? 'rotate-90' : ''}`} />
                         <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                           Disabled Services ({disabledQueue.length})
                         </h3>
-                      </button>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <div className="space-y-1.5 mt-1.5">
@@ -578,8 +576,9 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
           {/* Parallel Mode Toggle */}
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5 px-2.5 h-9 rounded-md border bg-background">
+              <TooltipTrigger
+                render={<div className="flex items-center gap-1.5 px-2.5 h-9 rounded-md border bg-background" />}
+              >
                   <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
                   <Label htmlFor="parallel-toggle" className="text-xs font-medium cursor-pointer select-none">
                     Parallel
@@ -595,7 +594,6 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
                       Experimental
                     </Badge>
                   )}
-                </div>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="font-medium">Parallel Execution (Experimental)</p>
@@ -609,8 +607,9 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
 
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex-1">
+              <TooltipTrigger
+                render={<span className="flex-1" />}
+              >
                   <Button
                     onClick={() => onStart(parallelMode)}
                     disabled={enabledCount === 0}
@@ -619,7 +618,6 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
                     <Play className="h-4 w-4" />
                     Start Service ({enabledCount} {enabledCount === 1 ? 'task' : 'tasks'})
                   </Button>
-                </span>
               </TooltipTrigger>
               {enabledCount === 0 && (
                 <TooltipContent>
