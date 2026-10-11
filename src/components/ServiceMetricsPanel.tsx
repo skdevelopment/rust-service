@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Timer,
   Cpu,
@@ -48,6 +47,8 @@ import type {
   ServiceTimeMetrics,
 } from '@/types/time-tracking';
 import { formatDuration, getConfidenceColor, getConfidenceBadge, getNetworkTypeLabel, formatModelQuality, getModelQualityColor } from '@/types/time-tracking';
+import { commands } from '@/bindings';
+import { num } from '@/lib/utils';
 
 // =============================================================================
 // Types
@@ -89,15 +90,15 @@ function PcFingerprintCard({ fingerprint }: { fingerprint: PcFingerprint | null 
     {
       icon: Cpu,
       label: 'CPU',
-      value: fingerprint.cpuScore.toFixed(1),
-      description: `${fingerprint.physicalCores}c/${fingerprint.logicalCores}t @ ${fingerprint.frequencyGhz.toFixed(1)}GHz`,
+      value: num(fingerprint.cpuScore).toFixed(1),
+      description: `${fingerprint.physicalCores}c/${fingerprint.logicalCores}t @ ${num(fingerprint.frequencyGhz).toFixed(1)}GHz`,
       color: 'text-blue-500',
     },
     {
       icon: MemoryStick,
       label: 'RAM',
-      value: `${fingerprint.availableRamGb.toFixed(0)}GB`,
-      description: `of ${fingerprint.totalRamGb.toFixed(0)}GB avail`,
+      value: `${num(fingerprint.availableRamGb).toFixed(0)}GB`,
+      description: `of ${num(fingerprint.totalRamGb).toFixed(0)}GB avail`,
       color: 'text-purple-500',
     },
     {
@@ -110,9 +111,9 @@ function PcFingerprintCard({ fingerprint }: { fingerprint: PcFingerprint | null 
     {
       icon: Activity,
       label: 'Load',
-      value: `${fingerprint.cpuLoadPercent.toFixed(0)}%`,
-      description: fingerprint.cpuLoadPercent > 70 ? 'High' : fingerprint.cpuLoadPercent > 30 ? 'Medium' : 'Low',
-      color: fingerprint.cpuLoadPercent > 70 ? 'text-red-500' : fingerprint.cpuLoadPercent > 30 ? 'text-yellow-500' : 'text-green-500',
+      value: `${num(fingerprint.cpuLoadPercent).toFixed(0)}%`,
+      description: num(fingerprint.cpuLoadPercent) > 70 ? 'High' : num(fingerprint.cpuLoadPercent) > 30 ? 'Medium' : 'Low',
+      color: num(fingerprint.cpuLoadPercent) > 70 ? 'text-red-500' : num(fingerprint.cpuLoadPercent) > 30 ? 'text-yellow-500' : 'text-green-500',
     },
   ];
 
@@ -207,7 +208,7 @@ function ServiceStatsRow({ stats, serviceName, onClear }: ServiceStatsRowProps) 
           <Badge variant={confidenceVariant} className="text-xs">
             {stats.sampleCount} sample{stats.sampleCount !== 1 ? 's' : ''}
           </Badge>
-          {stats.modelQuality !== undefined && stats.modelQuality > 0 && (
+          {stats.modelQuality !== undefined && num(stats.modelQuality) > 0 && (
             <Badge variant="outline" className={`text-xs ${getModelQualityColor(stats.modelQuality)}`}>
               R² {formatModelQuality(stats.modelQuality)}
             </Badge>
@@ -265,10 +266,10 @@ export function ServiceMetricsPanel() {
     setIsLoading(true);
     try {
       const [fp, allStats, allMetrics, serviceDefs] = await Promise.all([
-        invoke<PcFingerprint>('get_pc_fingerprint'),
-        invoke<ServiceTimeStats[]>('get_service_averages'),
-        invoke<ServiceTimeMetrics>('get_service_time_metrics'),
-        invoke<ServiceDefinition[]>('get_service_definitions'),
+        commands.getPcFingerprint(),
+        commands.getServiceAverages(),
+        commands.getServiceTimeMetrics(),
+        commands.getServiceDefinitions(),
       ]);
       setFingerprint(fp);
       setStats(allStats);
@@ -293,7 +294,7 @@ export function ServiceMetricsPanel() {
   // Clear specific service metrics
   const handleClearService = async (serviceId: string) => {
     try {
-      await invoke('clear_service_metrics', { serviceId });
+      await commands.clearServiceMetrics(serviceId ?? null);
       await loadData();
     } catch (error) {
       console.error('Failed to clear service metrics:', error);
@@ -304,7 +305,7 @@ export function ServiceMetricsPanel() {
   const handleClearAll = async () => {
     setIsClearing(true);
     try {
-      const deleted = await invoke<number>('clear_service_metrics', { serviceId: null });
+      const deleted = await commands.clearServiceMetrics(null);
       console.log(`Cleared ${deleted} samples`);
       await loadData();
     } catch (error) {
@@ -318,7 +319,7 @@ export function ServiceMetricsPanel() {
   const handleRetrain = async () => {
     setIsRetraining(true);
     try {
-      const trained = await invoke<number>('retrain_time_models');
+      const trained = await commands.retrainTimeModels();
       console.log(`Trained ${trained} models`);
       await loadData();
     } catch (error) {

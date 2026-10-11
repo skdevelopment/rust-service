@@ -6,7 +6,6 @@
  */
 
 import { useState, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Search,
   Zap,
@@ -54,6 +53,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { commands } from '@/bindings';
 
 /**
  * Shortcut definition
@@ -219,11 +219,7 @@ function ShortcutButton({ shortcut }: { shortcut: Shortcut }) {
   const handleClick = async () => {
     try {
       setLoading(true);
-      await invoke('open_shortcut', {
-        command: shortcut.command,
-        args: shortcut.args || null,
-        runAsAdmin: shortcut.adminRequired || false,
-      });
+      await commands.openShortcut(shortcut.command, (shortcut.args || null) ?? null, (shortcut.adminRequired || false) ?? null);
     } catch (error) {
       console.error(`Failed to open ${shortcut.name}:`, error);
     } finally {

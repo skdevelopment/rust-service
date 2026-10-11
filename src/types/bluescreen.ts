@@ -4,48 +4,15 @@
  * TypeScript interfaces for crash dump analysis.
  */
 
+import type * as B from '@/bindings';
 /** Summary of a BSOD crash */
-export interface BsodEntry {
-  id: string;
-  dumpPath: string;
-  crashTime: string;
-  stopCode: string;
-  stopCodeName: string | null;
-  faultingModule: string | null;
-  bugCheckCode: string;
-  parameters: string[];
-  fileSizeBytes: number;
-}
+export type BsodEntry = B.BsodEntry;
 
 /** Detailed BSOD analysis */
-export interface BsodDetails {
-  dumpPath: string;
-  dumpType: string;
-  crashTime: string;
-  uptimeBeforeCrash: string | null;
-  stopCode: string;
-  stopCodeName: string | null;
-  stopCodeDescription: string | null;
-  bugCheckCode: string;
-  parameters: string[];
-  faultingModule: string | null;
-  faultingModulePath: string | null;
-  stackTrace: string[];
-  loadedModules: string[];
-  possibleCauses: string[];
-  recommendations: string[];
-}
+export type BsodDetails = B.BsodDetails;
 
 /** BSOD statistics */
-export interface BsodStats {
-  totalCrashes: number;
-  crashesLast7Days: number;
-  crashesLast30Days: number;
-  mostCommonStopCode: string | null;
-  mostCommonModule: string | null;
-  oldestCrash: string | null;
-  newestCrash: string | null;
-}
+export type BsodStats = B.BsodStats;
 
 /** Format crash timestamp for display */
 export function formatCrashTime(isoString: string): string {
@@ -62,13 +29,6 @@ export function formatDumpSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** Get severity color based on crash frequency */
-export function getCrashFrequencyColor(crashes7d: number): string {
-  if (crashes7d >= 3) return 'destructive';
-  if (crashes7d >= 1) return 'default';
-  return 'secondary';
 }
 
 /** Common stop code categories */

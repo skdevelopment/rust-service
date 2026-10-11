@@ -3,17 +3,13 @@
 //! Runs HeavyLoad.exe for CPU, memory, disk, and GPU stress testing.
 //! Executes headlessly with configurable duration and reports completion status.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -35,7 +31,7 @@ impl Service for HeavyLoadService {
                 ServiceOptionSchema {
                     id: "duration_minutes".to_string(),
                     label: "Duration (minutes)".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(5),
                     min: Some(1.0),
                     max: Some(60.0),
@@ -45,7 +41,7 @@ impl Service for HeavyLoadService {
                 ServiceOptionSchema {
                     id: "stress_cpu".to_string(),
                     label: "Stress CPU".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(true),
                     min: None,
                     max: None,
@@ -55,7 +51,7 @@ impl Service for HeavyLoadService {
                 ServiceOptionSchema {
                     id: "stress_memory".to_string(),
                     label: "Stress Memory".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(true),
                     min: None,
                     max: None,
@@ -65,7 +61,7 @@ impl Service for HeavyLoadService {
                 ServiceOptionSchema {
                     id: "stress_disk".to_string(),
                     label: "Stress Disk".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(false),
                     min: None,
                     max: None,
@@ -79,12 +75,7 @@ impl Service for HeavyLoadService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "heavyload";
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // Parse options
         let duration_minutes = options
             .get("duration_minutes")
@@ -103,29 +94,12 @@ impl Service for HeavyLoadService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting HeavyLoad stress test...", &mut logs, app);
+        ctx.log("Starting HeavyLoad stress test...");
 
         // Validate options
         if !stress_cpu && !stress_memory && !stress_disk {
-            emit_log(
-                "ERROR: At least one stress type must be enabled",
-                &mut logs,
-                app,
-            );
-            findings.push(ServiceFinding {
+            ctx.log("ERROR: At least one stress type must be enabled");
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Error,
                 title: "Invalid Configuration".to_string(),
                 description: "At least one of CPU, Memory, or Disk stress must be enabled."
@@ -133,23 +107,15 @@ impl Service for HeavyLoadService {
                 recommendation: Some("Enable at least one stress test option.".to_string()),
                 data: Some(json!({"type": "error", "reason": "no_stress_selected"})),
             });
-            return ServiceResult {
-                service_id: service_id.to_string(),
-                success: false,
-                error: Some("No stress test type selected".to_string()),
-                duration_ms: start.elapsed().as_millis() as u64,
-                findings,
-                logs,
-                agent_analysis: None,
-            };
+            return ctx.finish(false, Some("No stress test type selected".to_string()));
         }
 
         // Get executable path
         let exe_path = match get_program_exe_path("heavyload".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: HeavyLoad.exe not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: HeavyLoad.exe not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "HeavyLoad Not Found".to_string(),
                     description: "HeavyLoad executable was not found.".to_string(),
@@ -159,35 +125,15 @@ impl Service for HeavyLoadService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("HeavyLoad.exe not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("HeavyLoad.exe not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate HeavyLoad: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate HeavyLoad: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(&format!("Found HeavyLoad at: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Found HeavyLoad at: {}", exe_path));
 
         // Build command arguments
         let mut args: Vec<String> = Vec::new();
@@ -221,30 +167,18 @@ impl Service for HeavyLoadService {
         }
         let test_desc = test_types.join(", ");
 
-        emit_log(
-            &format!(
-                "Running {} stress test for {} minute(s)...",
-                test_desc, duration_minutes
-            ),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            "System will be under heavy load. Do not use the computer during this test.",
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Running {} stress test for {} minute(s)...",
+            test_desc, duration_minutes
+        ));
+        ctx.log("System will be under heavy load. Do not use the computer during this test.");
 
         // Execute HeavyLoad
-        let output = match Command::new(&exe_path).args(&args).output() {
+        let output = match ctx.output(crate::proc::command(&exe_path).args(&args)) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute HeavyLoad: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute HeavyLoad: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run HeavyLoad: {}", e),
@@ -253,34 +187,18 @@ impl Service for HeavyLoadService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
         let exit_code = output.status.code().unwrap_or(-1);
-        let actual_duration = start.elapsed();
+        let actual_duration = std::time::Duration::from_millis(ctx.elapsed_ms());
 
-        emit_log(
-            &format!("HeavyLoad completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            &format!(
-                "Actual test duration: {:.1} minutes",
-                actual_duration.as_secs_f64() / 60.0
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("HeavyLoad completed with exit code: {}", exit_code));
+        ctx.log(format!(
+            "Actual test duration: {:.1} minutes",
+            actual_duration.as_secs_f64() / 60.0
+        ));
 
         // Determine result
         let success = exit_code == 0;
@@ -293,7 +211,7 @@ impl Service for HeavyLoadService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title: status.to_string(),
             description: format!(
@@ -326,16 +244,8 @@ impl Service for HeavyLoadService {
             })),
         });
 
-        emit_log("Stress test complete", &mut logs, app);
+        ctx.log("Stress test complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error: None,
-            duration_ms: actual_duration.as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, None)
     }
 }

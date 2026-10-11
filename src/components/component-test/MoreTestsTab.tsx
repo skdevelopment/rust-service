@@ -15,6 +15,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
+/** Web Bluetooth / WebUSB entry points (not in the default DOM typings) */
+type NavigatorWithDevices = Navigator & {
+  bluetooth?: { requestDevice: (options: { acceptAllDevices: boolean }) => Promise<unknown> };
+  usb?: { requestDevice: (options: { filters: unknown[] }) => Promise<unknown> };
+};
+
 export function MoreTestsTab() {
   const [bluetoothSupported, setBluetoothSupported] = useState<boolean | null>(null);
 
@@ -47,10 +53,10 @@ export function MoreTestsTab() {
               className="w-full"
               onClick={async () => {
                 try {
-                  await (navigator as any).bluetooth.requestDevice({
+                  await (navigator as NavigatorWithDevices).bluetooth?.requestDevice({
                     acceptAllDevices: true
                   });
-                } catch (err) {
+                } catch {
                   // User cancelled or error
                 }
               }}
@@ -84,8 +90,8 @@ export function MoreTestsTab() {
               className="w-full mt-4"
               onClick={async () => {
                 try {
-                  await (navigator as any).usb.requestDevice({ filters: [] });
-                } catch (err) {
+                  await (navigator as NavigatorWithDevices).usb?.requestDevice({ filters: [] });
+                } catch {
                   // User cancelled
                 }
               }}

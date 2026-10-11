@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Plus,
   Pencil,
@@ -29,6 +28,7 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import type { ServicePreset } from '@/types/service';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Service Presets Panel
@@ -51,8 +51,8 @@ export function ServicePresetsPanel() {
   const loadPresets = async () => {
     try {
       const [presetsData, builtinData] = await Promise.all([
-        invoke<ServicePreset[]>('get_service_presets'),
-        invoke<string[]>('get_builtin_preset_ids'),
+        commands.getServicePresets(),
+        commands.getBuiltinPresetIds(),
       ]);
       setPresets(presetsData);
       setBuiltinIds(builtinData);
@@ -113,7 +113,7 @@ export function ServicePresetsPanel() {
         services: editingPreset?.services || [],
       };
 
-      await invoke('save_service_preset', { preset });
+      await commands.saveServicePreset(preset);
       await loadPresets();
       handleCancel();
     } catch (e) {
@@ -127,7 +127,7 @@ export function ServicePresetsPanel() {
     if (!confirm('Are you sure you want to delete this preset?')) return;
 
     try {
-      await invoke('delete_service_preset', { presetId });
+      await commands.deleteServicePreset(presetId);
       await loadPresets();
     } catch (e) {
       console.error('Failed to delete preset:', e);
@@ -138,7 +138,7 @@ export function ServicePresetsPanel() {
     if (!confirm('Reset this preset to its default configuration?')) return;
 
     try {
-      await invoke('delete_service_preset', { presetId });
+      await commands.deleteServicePreset(presetId);
       await loadPresets();
     } catch (e) {
       console.error('Failed to reset preset:', e);

@@ -7,13 +7,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Gamepad2,
-  Vibrate,
-  RefreshCw,
-  CircleDot,
-  AlertCircle,
-} from 'lucide-react';
+import { Gamepad2, Vibrate, CircleDot, AlertCircle } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,7 +15,6 @@ import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Separator } from '@/components/ui/separator';
 
 // Standard button labels for Xbox-style controllers
 const BUTTON_LABELS = [
@@ -486,7 +479,9 @@ export function GamepadTestTab() {
     const gp = raw[selectedGamepad.index];
     if (!gp) return;
     try {
-      const actuator = (gp as any).vibrationActuator;
+      const actuator = (gp as Gamepad & {
+        vibrationActuator?: { playEffect: (type: string, params: Record<string, number>) => Promise<unknown> };
+      }).vibrationActuator;
       if (actuator) {
         await actuator.playEffect('dual-rumble', {
           duration: 300,

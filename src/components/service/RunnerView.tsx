@@ -5,20 +5,8 @@
  * inline error display, live findings feed, and smarter ETA.
  */
 
-import { useState, useEffect, useRef } from 'react';
-import {
-  Loader2,
-  Square,
-  CheckCircle2,
-  AlertCircle,
-  Timer,
-  Clock,
-  Zap,
-  FlaskConical,
-  ChevronDown,
-  ChevronRight,
-  XCircle,
-} from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Loader2, Square, CheckCircle2, Timer, Clock, Zap, FlaskConical, ChevronDown, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -26,11 +14,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 
 import type {
   ServiceReport,
@@ -38,6 +21,7 @@ import type {
   ServiceQueueItem,
   ServiceFinding,
 } from '@/types/service';
+import { findResultForItem, resultKey } from '@/types/service';
 import { getIcon, formatDuration } from './utils';
 
 // =============================================================================
@@ -49,7 +33,6 @@ export interface RunnerViewProps {
   definitions: ServiceDefinition[];
   logs: string[];
   onCancel: () => void;
-  onBack: () => void;
   queue: ServiceQueueItem[];
   cancelError?: string | null;
 }
@@ -70,7 +53,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 // Component
 // =============================================================================
 
-export function RunnerView({ report, definitions, logs, onCancel, onBack, queue, cancelError }: RunnerViewProps) {
+export function RunnerView({ report, definitions, logs, onCancel, queue, cancelError }: RunnerViewProps) {
   const [showLogs, setShowLogs] = useState(true);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [taskElapsedMs, setTaskElapsedMs] = useState(0);
@@ -89,7 +72,7 @@ export function RunnerView({ report, definitions, logs, onCancel, onBack, queue,
   const enabledServices = (report?.queue ?? queue).filter((q) => q.enabled);
   const isParallel = report?.parallelMode ?? false;
   const currentIndex = report?.currentServiceIndex ?? 0;
-  const currentIndices = report?.currentServiceIndices ?? [];
+  const currentIndices = useMemo(() => report?.currentServiceIndices ?? [], [report?.currentServiceIndices]);
   const completedCount = report?.results?.length ?? 0;
   const totalCount = enabledServices.length;
   const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
@@ -107,20 +90,13 @@ export function RunnerView({ report, definitions, logs, onCancel, onBack, queue,
   const speedFactor = estimatedCompletedMs > 0 ? actualCompletedMs / estimatedCompletedMs : 1;
 
   // Remaining services estimate
-  const completedServiceIds = new Set(completedResults.map(r => r.serviceId));
-  const remainingServices = enabledServices.filter(item => !completedServiceIds.has(item.serviceId));
+  const remainingServices = enabledServices.filter(item => !findResultForItem(completedResults, item));
   const remainingEstMs = remainingServices.reduce((s, item) => {
     const def = definitionMap.get(item.serviceId);
     return s + (def?.estimatedDurationSecs ?? 30) * 1000;
   }, 0);
   const activeCount = isParallel ? Math.max(1, currentIndices.length) : 1;
   const estimatedRemainingMs = Math.max(0, (remainingEstMs * speedFactor) / activeCount);
-
-  // Total estimated for overall progress bar (including speed factor)
-  const totalEstimatedMs = enabledServices.reduce((acc, q) => {
-    const def = definitionMap.get(q.serviceId);
-    return acc + (def?.estimatedDurationSecs ?? 30) * 1000;
-  }, 0);
 
   // Collect notable findings from completed services
   const liveFindings: Array<{ serviceName: string; finding: ServiceFinding }> = [];
@@ -191,9 +167,9 @@ export function RunnerView({ report, definitions, logs, onCancel, onBack, queue,
 
   const serviceStatuses = enabledServices.map((item, index) => {
     const def = definitionMap.get(item.serviceId);
-    const result = report?.results?.find(r => r.serviceId === item.serviceId);
+    const result = findResultForItem(report?.results, item);
     let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending';
-    if (completedServiceIds.has(item.serviceId)) {
+    if (result) {
       status = result?.success ? 'completed' : 'failed';
     } else if (isParallel ? activeIndexSet.has(index) : index === currentIndex) {
       status = 'running';
@@ -333,7 +309,7 @@ export function RunnerView({ report, definitions, logs, onCancel, onBack, queue,
                 {failedResults.map((r, i) => {
                   const def = definitionMap.get(r.serviceId);
                   return (
-                    <span key={r.serviceId}>
+                    <span key={resultKey(r, i)}>
                       {i > 0 && ', '}
                       {def?.name ?? r.serviceId}{r.error ? `: ${r.error}` : ''}
                     </span>
@@ -353,7 +329,7 @@ export function RunnerView({ report, definitions, logs, onCancel, onBack, queue,
                   const Icon = getIcon(def.icon);
                   const elapsed = parallelTaskTimers.get(index) ?? 0;
                   return (
-                    <Card key={item.serviceId} className="border-primary/30 bg-primary/5 overflow-hidden !p-0 !gap-0">
+                    <Card key={item.id ?? `${item.serviceId}-${index}`} className="border-primary/30 bg-primary/5 overflow-hidden !p-0 !gap-0">
                       <div className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="relative">

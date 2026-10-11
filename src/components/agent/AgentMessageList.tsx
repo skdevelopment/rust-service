@@ -6,13 +6,13 @@
  */
 
 import { useRef, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from '@/components/animation-context';
 import { ChatMessage } from '@/components/agent/ChatMessage';
 import { ServiceRunMonitor } from '@/components/agent/ServiceRunMonitor';
-import type { Message } from '@/hooks/useConversations';
-import type { ActiveServiceRun } from '@/hooks/useServiceSupervision';
+import type { Message } from '@/lib/agent-conversations';
+import type { ActiveServiceRun } from '@/components/agent-session-context';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Types
@@ -100,21 +100,21 @@ export function AgentMessageList({
             reportId={activeServiceRun.reportId}
             onPause={async () => {
               try {
-                await invoke('pause_service_run');
+                await commands.pauseServiceRun();
               } catch (e) {
                 console.error(e);
               }
             }}
             onResume={async () => {
               try {
-                await invoke('resume_service_run');
+                await commands.resumeServiceRun();
               } catch (e) {
                 console.error(e);
               }
             }}
             onCancel={async () => {
               try {
-                await invoke('cancel_service_run');
+                await commands.cancelServiceRun();
                 onCancelServiceRun();
               } catch (e) {
                 console.error(e);

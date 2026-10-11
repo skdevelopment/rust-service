@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import {
   Check,
@@ -28,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { useSettings } from '@/components/settings-context';
 import type { BusinessSettings } from '@/types/settings';
 import { DEFAULT_BUSINESS } from '@/types/settings';
+import { commands } from '@/bindings';
 
 export function BusinessPanel() {
   const { settings, updateSetting, isLoading } = useSettings();
@@ -67,22 +67,22 @@ export function BusinessPanel() {
     }
   }, [business, isLoading, initialized]);
 
-  // Reset initialized when business mode is toggled to re-sync
+  // Re-sync the local fields when business mode is switched on
+  const { enabled, name, address, phone, email, website, tfn, abn, logoPath } = business;
   useEffect(() => {
-    if (business.enabled) {
-      setLocalName(business.name);
-      setLocalAddress(business.address);
-      setLocalPhone(business.phone);
-      setLocalEmail(business.email);
-      setLocalWebsite(business.website);
-      setLocalTfn(business.tfn);
-      setLocalAbn(business.abn);
-      // Load logo preview
-      if (business.logoPath) {
-        loadLogoPreview(business.logoPath);
-      }
-    }
-  }, [business.enabled]);
+    if (!enabled) return;
+    setLocalName(name);
+    setLocalAddress(address);
+    setLocalPhone(phone);
+    setLocalEmail(email);
+    setLocalWebsite(website);
+    setLocalTfn(tfn);
+    setLocalAbn(abn);
+    if (logoPath) loadLogoPreview(logoPath);
+    // Only when the mode is toggled: re-syncing on every stored change would
+    // overwrite what the user is typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
 
   const handleToggleEnabled = async (checked: boolean) => {
     await updateSetting('business.enabled', checked);
@@ -93,7 +93,7 @@ export function BusinessPanel() {
   const loadLogoPreview = async (logoPath: string) => {
     if (logoPath) {
       try {
-        const url = await invoke<string | null>('get_business_logo', { logoPath });
+        const url = await commands.getBusinessLogo(logoPath);
         setLogoPreview(url);
       } catch {
         setLogoPreview(null);
@@ -115,9 +115,7 @@ export function BusinessPanel() {
         setIsUploadingLogo(true);
         try {
           // Save the logo to data directory and get relative path
-          const savedPath = await invoke<string>('save_business_logo', {
-            sourcePath: selected,
-          });
+          const savedPath = await commands.saveBusinessLogo(selected);
           await updateSetting('business.logoPath', savedPath);
           await loadLogoPreview(savedPath);
         } catch (e) {
@@ -134,7 +132,7 @@ export function BusinessPanel() {
   // Clear the logo
   const handleClearLogo = async () => {
     setLogoPreview(null);
-    await updateSetting('business.logoPath', '');
+    await updateSetting('business.logoPath', null);
   };
 
   const handleFieldBlur = async (field: keyof BusinessSettings, value: string) => {

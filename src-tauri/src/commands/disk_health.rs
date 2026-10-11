@@ -4,16 +4,15 @@
 //! Falls back gracefully if smartctl is not installed.
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
-use crate::commands::get_program_exe_path;
+use crate::commands::required_programs::get_program_exe_path;
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /// A single S.M.A.R.T. attribute
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SmartAttribute {
     pub id: u32,
@@ -25,7 +24,7 @@ pub struct SmartAttribute {
 }
 
 /// Health information for a single disk
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskHealthInfo {
     pub device: String,
@@ -43,7 +42,7 @@ pub struct DiskHealthInfo {
 }
 
 /// Response from get_disk_health
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskHealthResponse {
     pub disks: Vec<DiskHealthInfo>,
@@ -65,9 +64,12 @@ fn find_smartctl() -> Option<String> {
     }
 
     // Fallback: check PATH and common install locations
-    if let Ok(output) = Command::new("where").arg("smartctl").output() {
+    if let Ok(output) = crate::proc::output_with_timeout(
+        crate::proc::command("where").arg("smartctl"),
+        crate::proc::QUERY_TIMEOUT,
+    ) {
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout)
+            let path = crate::proc::decode_output(&output.stdout)
                 .lines()
                 .next()
                 .unwrap_or("")
@@ -94,17 +96,18 @@ fn find_smartctl() -> Option<String> {
 
 /// List physical drives on Windows using wmic
 fn list_physical_drives() -> Vec<String> {
-    let output = Command::new("powershell")
-        .args([
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
             "-NoProfile",
             "-Command",
             "Get-PhysicalDisk | Select-Object -ExpandProperty DeviceId | Sort-Object",
-        ])
-        .output();
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    );
 
     match output {
         Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
+            let text = crate::proc::decode_output(&out.stdout);
             text.lines()
                 .filter_map(|line| {
                     let trimmed = line.trim();
@@ -220,9 +223,9 @@ fn parse_smartctl_json(json_str: &str) -> Option<DiskHealthInfo> {
 
             // Extract key metrics by attribute ID
             match id {
-                5 => reallocated_sectors = Some(raw_num),        // Reallocated Sector Count
-                197 => pending_sectors = Some(raw_num),           // Current Pending Sector Count
-                199 => crc_errors = Some(raw_num),                // UDMA CRC Error Count
+                5 => reallocated_sectors = Some(raw_num), // Reallocated Sector Count
+                197 => pending_sectors = Some(raw_num),   // Current Pending Sector Count
+                199 => crc_errors = Some(raw_num),        // UDMA CRC Error Count
                 177 | 231 => wear_leveling_pct = Some(value as u8), // Wear Leveling Count / SSD Life Left
                 _ => {}
             }
@@ -269,6 +272,7 @@ fn parse_smartctl_json(json_str: &str) -> Option<DiskHealthInfo> {
 
 /// Get S.M.A.R.T. health data for all detected disks
 #[tauri::command]
+#[specta::specta]
 pub async fn get_disk_health() -> DiskHealthResponse {
     tokio::task::spawn_blocking(get_disk_health_blocking)
         .await
@@ -286,7 +290,10 @@ fn get_disk_health_blocking() -> DiskHealthResponse {
             return DiskHealthResponse {
                 disks: Vec::new(),
                 smartctl_found: false,
-                error: Some("smartctl not found. Install smartmontools for S.M.A.R.T. health data.".to_string()),
+                error: Some(
+                    "smartctl not found. Install smartmontools for S.M.A.R.T. health data."
+                        .to_string(),
+                ),
             };
         }
     };
@@ -295,12 +302,13 @@ fn get_disk_health_blocking() -> DiskHealthResponse {
     let mut disks = Vec::new();
 
     for drive in &drives {
-        let output = Command::new(&smartctl_path)
-            .args(["-a", drive, "--json"])
-            .output();
+        let output = crate::proc::output_with_timeout(
+            crate::proc::command(&smartctl_path).args(["-a", drive, "--json"]),
+            crate::proc::QUERY_TIMEOUT,
+        );
 
         if let Ok(out) = output {
-            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stdout = crate::proc::decode_output(&out.stdout);
             if let Some(info) = parse_smartctl_json(&stdout) {
                 disks.push(info);
             }

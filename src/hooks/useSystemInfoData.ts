@@ -6,8 +6,8 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import type { SystemInfo } from '@/types';
+import { commands } from '@/bindings';
 
 export interface UseSystemInfoDataReturn {
   systemInfo: SystemInfo | null;
@@ -43,7 +43,7 @@ export function useSystemInfoData(): UseSystemInfoDataReturn {
       else setIsLoading(true);
 
       setError(null);
-      const info = await invoke<SystemInfo>('get_system_info');
+      const info = await commands.getSystemInfo();
 
       // Avoid out-of-order updates
       if (requestId === requestIdRef.current) {

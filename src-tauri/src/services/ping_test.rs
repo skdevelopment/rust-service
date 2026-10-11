@@ -2,16 +2,12 @@
 //!
 //! Tests network connectivity by pinging specified hosts.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -33,7 +29,7 @@ impl Service for PingTestService {
                 ServiceOptionSchema {
                     id: "target".to_string(),
                     label: "Target Host".to_string(),
-                    option_type: "string".to_string(),
+                    option_type: OptionType::String,
                     default_value: json!("8.8.8.8"),
                     min: None,
                     max: None,
@@ -43,7 +39,7 @@ impl Service for PingTestService {
                 ServiceOptionSchema {
                     id: "count".to_string(),
                     label: "Ping Count".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(4),
                     min: Some(1.0),
                     max: Some(100.0),
@@ -57,27 +53,9 @@ impl Service for PingTestService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let mut success = true;
         let mut error: Option<String> = None;
-
-        let service_id = "ping-test";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
 
         let target = options
             .get("target")
@@ -85,61 +63,40 @@ impl Service for PingTestService {
             .unwrap_or("8.8.8.8");
         let count = options.get("count").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
 
-        emit_log(
-            &format!("Starting ping test to {} ({} pings)", target, count),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Starting ping test to {} ({} pings)",
+            target, count
+        ));
 
         // Run Windows ping command
-        let output = Command::new("ping")
-            .args(["-n", &count.to_string(), target])
-            .output();
+        let output =
+            ctx.output(crate::proc::command("ping").args(["-n", &count.to_string(), target]));
 
         match output {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = crate::proc::decode_output(&output.stdout);
+                let stderr = crate::proc::decode_output(&output.stderr);
 
                 // Log each line
                 for line in stdout.lines() {
                     if !line.trim().is_empty() {
-                        emit_log(line, &mut logs, app);
+                        ctx.log(line);
                     }
                 }
 
                 if !stderr.is_empty() {
-                    emit_log(&format!("Error: {}", stderr), &mut logs, app);
+                    ctx.log(format!("Error: {}", stderr));
                 }
 
-                // Parse results
-                let mut avg_latency: Option<f64> = None;
-                let mut packet_loss: Option<u32> = None;
-
-                // Parse average latency from "Average = XXms"
-                if let Some(avg_line) = stdout.lines().find(|l| l.contains("Average")) {
-                    if let Some(avg_str) = avg_line.split('=').next_back() {
-                        let cleaned = avg_str.trim().replace("ms", "");
-                        avg_latency = cleaned.parse().ok();
-                    }
-                }
-
-                // Parse packet loss from "(X% loss)" or "Lost = X"
-                if let Some(loss_line) = stdout.lines().find(|l| l.contains("Lost")) {
-                    if let Some(lost_part) = loss_line.split("Lost").nth(1) {
-                        if let Ok(num) = lost_part
-                            .chars()
-                            .filter(|c| c.is_ascii_digit())
-                            .collect::<String>()
-                            .parse::<u32>()
-                        {
-                            packet_loss = Some((num * 100) / count);
-                        }
-                    }
-                }
+                // Locale-independent parse (shared with the Network Diagnostics page)
+                let parsed =
+                    crate::commands::network_diagnostics::parse_ping_output(target, &stdout, count);
+                let avg_latency: Option<f64> = parsed.avg_ms.map(f64::from);
+                let packet_loss: Option<u32> =
+                    (!parsed.replies.is_empty()).then(|| parsed.packet_loss_percent.round() as u32);
 
                 // Generate findings
-                if output.status.success() {
+                if parsed.packets_received > 0 {
                     if let Some(avg) = avg_latency {
                         let severity = if avg < 50.0 {
                             FindingSeverity::Success
@@ -151,7 +108,7 @@ impl Service for PingTestService {
                             FindingSeverity::Error
                         };
 
-                        findings.push(ServiceFinding {
+                        ctx.findings.push(ServiceFinding {
                             severity,
                             title: format!("Average Latency: {:.0}ms", avg),
                             description: format!(
@@ -180,7 +137,7 @@ impl Service for PingTestService {
                             FindingSeverity::Error
                         };
 
-                        findings.push(ServiceFinding {
+                        ctx.findings.push(ServiceFinding {
                             severity,
                             title: format!("Packet Loss: {}%", loss),
                             description: format!(
@@ -200,11 +157,11 @@ impl Service for PingTestService {
                         });
                     }
 
-                    emit_log("Ping test completed successfully", &mut logs, app);
+                    ctx.log("Ping test completed successfully");
                 } else {
                     success = false;
                     error = Some("Ping command failed".to_string());
-                    findings.push(ServiceFinding {
+                    ctx.findings.push(ServiceFinding {
                         severity: FindingSeverity::Error,
                         title: "Ping Failed".to_string(),
                         description: format!("Unable to reach {}", target),
@@ -218,18 +175,10 @@ impl Service for PingTestService {
             Err(e) => {
                 success = false;
                 error = Some(format!("Failed to execute ping command: {}", e));
-                emit_log(&format!("Error: {}", e), &mut logs, app);
+                ctx.log(format!("Error: {}", e));
             }
         }
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, error)
     }
 }

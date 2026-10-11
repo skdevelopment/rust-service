@@ -38,6 +38,7 @@ import {
   PenLine,
   FileOutput,
 } from 'lucide-react';
+import { commands } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { FileReference } from './FileReference';
@@ -106,7 +107,7 @@ function getActivityConfig(type: AgentActivity['type'], status: ActivityStatus) 
       case 'service_edit':
         return { Icon: PenLine, label: 'Edit Report', color: 'text-chart-5' };
       case 'service_pdf':
-        return { Icon: FileOutput, label: 'PDF Report', color: 'text-chart-5' };
+        return { Icon: FileOutput, label: 'Export Report', color: 'text-chart-5' };
       default:
         return { Icon: FileText, label: 'Action', color: 'text-muted-foreground' };
     }
@@ -222,6 +223,56 @@ function EditFilePreview({ oldString, newString }: { oldString?: string; newStri
 }
 
 /**
+ * Expandable preview of file content that is about to be written
+ */
+function ContentPreview({ content, label }: { content?: string; label: string }) {
+  const [open, setOpen] = useState(false);
+  if (content === undefined) return null;
+  const lines = content.split('\n').length;
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {open ? `Hide ${label}` : `Show ${label} (${lines} line${lines === 1 ? '' : 's'}, ${content.length} chars)`}
+      </button>
+      {open && (
+        <pre className="mt-2 text-xs bg-muted/60 border border-border/50 rounded p-2 max-h-[240px] overflow-auto whitespace-pre-wrap break-words font-mono">
+          {content || '(empty file)'}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/**
+ * List of services (and their options) a queued run will execute
+ */
+function ServiceQueuePreview({ services }: { services?: Array<{ serviceId: string; options?: Record<string, unknown> }> }) {
+  if (!services?.length) return null;
+  return (
+    <ul className="mt-2 space-y-1 text-xs">
+      {services.map((s, i) => {
+        const opts = Object.entries(s.options ?? {});
+        return (
+          <li key={`${s.serviceId}-${i}`} className="flex flex-wrap gap-x-2 font-mono">
+            <span className="text-foreground">{i + 1}. {s.serviceId}</span>
+            {opts.length > 0 && (
+              <span className="text-muted-foreground">
+                {opts.map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ')}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
  * Service activity block (for service_queue_started, service_paused, service_resumed, service_cancelled)
  */
 function ServiceActivityBlock({
@@ -255,7 +306,7 @@ function ServiceActivityBlock({
     description = 'Cancel service run';
     reason = activity.reason || '';
   } else if (activity.type === 'service_pdf') {
-    description = `Generate PDF report${activity.filename ? `: ${activity.filename}` : ''}`;
+    description = activity.path ? `Exported to ${activity.path}` : 'Export report as text';
   }
 
   return (
@@ -330,6 +381,10 @@ function ServiceActivityBlock({
           </span>
         )}
       </div>
+
+      {activity.type === 'service_queue_started' && (isPending || isRunning) && (
+        <ServiceQueuePreview services={activity.services} />
+      )}
     </div>
   );
 }
@@ -444,9 +499,15 @@ function FileOperationBlock({
         )}
       </div>
 
-      {/* Expandable diff preview for edit_file */}
+      {/* Previews so the technician sees exactly what will be written */}
       {activity.type === 'edit_file' && isPending && (
         <EditFilePreview oldString={activity.oldString} newString={activity.newString} />
+      )}
+      {activity.type === 'write_file' && isPending && (
+        <ContentPreview content={activity.content} label="content" />
+      )}
+      {activity.type === 'generate_file' && isPending && (
+        <ContentPreview content={activity.content} label="file content" />
       )}
     </div>
   );
@@ -599,15 +660,20 @@ export function AgentActivityItem({ activity, onApprove, onReject }: AgentActivi
             {activity.size !== undefined && (
               <span className="text-muted-foreground text-xs">({formatFileSize(activity.size)})</span>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs"
-              onClick={(e) => { e.stopPropagation(); activity.path && window.open(`file://${activity.path}`, '_blank'); }}
-            >
-              <Download className="h-3 w-3 mr-1" />
-              Download
-            </Button>
+            {activity.fileId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  commands.openAgentFile(activity.fileId!).catch(err => console.error('Failed to open file:', err));
+                }}
+              >
+                <Download className="h-3 w-3 mr-1" />
+                Open
+              </Button>
+            )}
           </div>
         )}
 

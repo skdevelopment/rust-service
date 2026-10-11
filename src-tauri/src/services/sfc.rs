@@ -3,14 +3,9 @@
 //! Runs Windows built-in `sfc.exe /scannow` to check system file integrity.
 //! Parses UTF-16LE output for integrity violations and repair status.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -35,38 +30,16 @@ impl Service for SfcService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "sfc";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting System File Checker (SFC) scan...", &mut logs, app);
-        emit_log(
-            "This may take 10-15 minutes. Please wait...",
-            &mut logs,
-            app,
-        );
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting System File Checker (SFC) scan...");
+        ctx.log("This may take 10-15 minutes. Please wait...");
 
         // Execute SFC
-        let output = match Command::new("sfc").arg("/scannow").output() {
+        let output = match ctx.output(crate::proc::command("sfc").arg("/scannow")) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(&format!("ERROR: Failed to run SFC: {}", e), &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run SFC: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "SFC Execution Failed".to_string(),
                     description: format!("Could not execute SFC: {}", e),
@@ -75,28 +48,16 @@ impl Service for SfcService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("SFC execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("SFC execution failed: {}", e)));
             }
         };
 
         // SFC outputs UTF-16LE on Windows
-        let stdout = decode_sfc_output(&output.stdout);
-        let stderr = decode_sfc_output(&output.stderr);
+        let stdout = crate::proc::decode_output(&output.stdout);
+        let stderr = crate::proc::decode_output(&output.stderr);
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("SFC completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("SFC completed with exit code: {}", exit_code));
 
         // Parse the output
         let parsed = parse_sfc_output(&stdout);
@@ -104,19 +65,19 @@ impl Service for SfcService {
         // Log parsed results
         if let Some(violations) = parsed.integrity_violations {
             if violations {
-                emit_log("Integrity violations were found", &mut logs, app);
+                ctx.log("Integrity violations were found");
             } else {
-                emit_log("No integrity violations found", &mut logs, app);
+                ctx.log("No integrity violations found");
             }
         }
         if parsed.repairs_attempted {
-            emit_log("Repairs were attempted", &mut logs, app);
+            ctx.log("Repairs were attempted");
             if let Some(success) = parsed.repairs_successful {
-                emit_log(&format!("Repairs successful: {}", success), &mut logs, app);
+                ctx.log(format!("Repairs successful: {}", success));
             }
         }
         if parsed.pending_reboot {
-            emit_log("A pending reboot is required", &mut logs, app);
+            ctx.log("A pending reboot is required");
         }
 
         // Determine status
@@ -176,7 +137,7 @@ impl Service for SfcService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -207,20 +168,15 @@ impl Service for SfcService {
 
         // Log any stderr
         if !stderr.is_empty() {
-            emit_log(&format!("Stderr: {}", stderr.trim()), &mut logs, app);
+            ctx.log(format!("Stderr: {}", stderr.trim()));
         }
 
-        emit_log("SFC scan complete", &mut logs, app);
+        ctx.log("SFC scan complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0 || parsed.repairs_successful == Some(true),
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(
+            exit_code == 0 || parsed.repairs_successful == Some(true),
+            None,
+        )
     }
 }
 
@@ -237,27 +193,6 @@ struct SfcResult {
     pending_reboot: bool,
     access_denied: bool,
     winsxs_repair_pending: bool,
-}
-
-fn decode_sfc_output(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return String::new();
-    }
-
-    // SFC often outputs UTF-16LE on Windows (contains null bytes)
-    if bytes.contains(&0) {
-        // Try UTF-16LE decoding
-        let u16_iter = bytes
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
-        let u16_vec: Vec<u16> = u16_iter.collect();
-        if let Ok(decoded) = String::from_utf16(&u16_vec) {
-            return decoded.trim_start_matches('\u{feff}').to_string();
-        }
-    }
-
-    // Fallback encodings
-    String::from_utf8_lossy(bytes).to_string()
 }
 
 fn parse_sfc_output(output: &str) -> SfcResult {

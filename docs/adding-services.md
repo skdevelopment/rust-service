@@ -33,19 +33,24 @@ src/components/service-renderers/   # Frontend: Custom renderers
 
 ### 1. Create the Service File (Backend)
 
-Create a new file in `src-tauri/src/services/`:
+Create a new file in `src-tauri/src/services/`. A service describes itself in
+`definition()` and does its work in `run()` through the `ServiceCtx` it is
+given, which:
+
+- streams log lines to the UI (`ctx.log(...)`, one consistent `service-log` payload),
+- collects findings (`ctx.finding(...)` or `ctx.findings.push(...)`),
+- runs child processes so that **cancelling the run kills them**
+  (`ctx.output(&mut cmd)`; use `crate::proc::command(...)` so no console window flashes),
+- builds the result with the measured duration (`ctx.finish(success, error)`).
 
 ```rust
 // src-tauri/src/services/my_service.rs
 
-use std::time::Instant;
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceOptionSchema, ServiceResult,
 };
 
 pub struct MyService;
@@ -56,87 +61,69 @@ impl Service for MyService {
             id: "my-service".to_string(),
             name: "My Service".to_string(),
             description: "What this service does".to_string(),
-            category: "diagnostics".to_string(), // or "cleanup", "security", etc.
+            category: "diagnostics".to_string(), // or "cleanup", "security", "maintenance"
             estimated_duration_secs: 30,
-            required_programs: vec![], // IDs from REQUIRED_PROGRAMS registry (e.g., "bleachbit")
-            options: vec![
-                ServiceOptionSchema {
-                    id: "option_name".to_string(),
-                    label: "Option Label".to_string(),
-                    option_type: "number".to_string(), // or "string", "boolean", "select"
-                    default_value: json!(10),
-                    min: Some(1.0),
-                    max: Some(100.0),
-                    options: None,
-                    description: Some("Help text".to_string()),
-                },
-            ],
+            required_programs: vec![], // IDs from REQUIRED_PROGRAMS (e.g. "bleachbit")
+            options: vec![ServiceOptionSchema {
+                id: "option_name".to_string(),
+                label: "Option Label".to_string(),
+                option_type: OptionType::Number, // String, Boolean, Select, UsbDrive
+                default_value: json!(10),
+                min: Some(1.0),
+                max: Some(100.0),
+                options: None,
+                description: Some("Help text".to_string()),
+            }],
             icon: "icon-name".to_string(), // lucide icon name
-            exclusive_resources: vec![], // Resource tags for parallel mode (see below)
+            exclusive_resources: vec![],   // resource tags for parallel mode (see below)
+            dependencies: vec![],          // services that must run earlier in the queue
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "my-service";
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        let count = options.get("option_name").and_then(|v| v.as_u64()).unwrap_or(10);
+        ctx.log(format!("Starting my service ({} items)...", count));
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
+        // External tools: hidden window, killed if the user cancels the run.
+        let output = match ctx.output(crate::proc::command("whoami").arg("/all")) {
+            Ok(o) => o,
+            Err(e) => {
+                ctx.log(format!("ERROR: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
+            }
         };
+        // Decodes UTF-8, UTF-16LE and the console code page (non-English Windows)
+        let text = crate::proc::decode_output(&output.stdout);
 
-        emit_log("Starting my service...", &mut logs, app);
+        ctx.finding(
+            FindingSeverity::Success,
+            "Result Title",
+            format!("Read {} lines", text.lines().count()),
+            None,
+            Some(json!({ "type": "my_finding_type", "value": 42 })), // for a custom renderer
+        );
 
-        // Do the work here...
-
-        // Add findings with optional data for custom renderer
-        findings.push(ServiceFinding {
-            severity: FindingSeverity::Success,
-            title: "Result Title".to_string(),
-            description: "Detailed description".to_string(),
-            recommendation: None,
-            data: Some(json!({
-                "type": "my_finding_type",  // Used by custom renderer
-                "value": 42
-            })),
-        });
-
-        emit_log("Service complete", &mut logs, app);
-
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-        }
+        ctx.log("Service complete");
+        ctx.finish(true, None)
     }
 }
 ```
 
+Parse tool output without relying on English wording where you can (exit codes,
+numbers, `TTL=`-style tokens): technicians run this on localized Windows.
+
 ### 2. Register the Service
 
-Edit `src-tauri/src/services/mod.rs`:
+Edit `src-tauri/src/services/mod.rs`. The registry is an ordered list, which is
+also the order services are shown in:
 
 ```rust
-mod my_service;  // Add module declaration
+mod my_service; // module declaration
 
-// In SERVICE_REGISTRY LazyLock:
-static SERVICE_REGISTRY: LazyLock<HashMap<String, Box<dyn Service>>> = LazyLock::new(|| {
+static SERVICE_REGISTRY: LazyLock<Vec<(String, Box<dyn Service>)>> = LazyLock::new(|| {
     let services: Vec<Box<dyn Service>> = vec![
-        Box::new(ping_test::PingTestService),
-        Box::new(my_service::MyService),  // Add your service
+        // ...existing services
+        Box::new(my_service::MyService),
     ];
     // ...
 });
@@ -144,21 +131,10 @@ static SERVICE_REGISTRY: LazyLock<HashMap<String, Box<dyn Service>>> = LazyLock:
 
 ### 3. Add to Presets (Optional)
 
-In `src-tauri/src/services/mod.rs`, update `get_all_presets()`:
+In `get_all_presets()` in the same file, use the `svc` helper:
 
 ```rust
-ServicePreset {
-    id: "diagnostics".to_string(),
-    // ...
-    services: vec![
-        // existing services...
-        PresetServiceConfig {
-            service_id: "my-service".to_string(),
-            enabled: true,
-            options: json!({"option_name": 10}),
-        },
-    ],
-}
+svc("my-service", true, json!({ "option_name": 10 })),
 ```
 
 ### 4. Add Icon to Frontend (if new)
@@ -290,13 +266,16 @@ Get the executable path via the command:
 use crate::commands::required_programs::get_program_exe_path;
 
 // In your run() method:
-let exe_path = get_program_exe_path("my-program".to_string())?
-    .ok_or("my-program executable not found")?;
+let exe_path = match get_program_exe_path("my-program".to_string()) {
+    Ok(Some(path)) => path,
+    _ => return ctx.finish(false, Some("my-program executable not found".to_string())),
+};
 
-// Use exe_path to run the program
-std::process::Command::new(&exe_path)
-    .args(["--your", "--args"])
-    .output()?;
+// Run it through the context so a cancel stops it
+let output = match ctx.output(crate::proc::command(&exe_path).args(["--your", "--args"])) {
+    Ok(o) => o,
+    Err(e) => return ctx.finish(false, Some(format!("Failed to run my-program: {}", e))),
+};
 ```
 
 ### How Auto-Detection Works
@@ -315,7 +294,7 @@ If a service run is blocked due to missing programs, a dialog shows what's neede
 
 ## Testing
 
-1. Run `pnpm tauri dev`
+1. Run `bun tauri dev`
 2. Navigate to Service tab
 3. Select a preset that includes your service
 4. Verify it appears in the queue

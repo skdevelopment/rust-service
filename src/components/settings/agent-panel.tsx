@@ -35,8 +35,16 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { useSettings } from '@/components/settings-context';
-import { AGENT_PROVIDERS, type AgentSettings, type ProviderApiKeys, type MCPServerConfig } from '@/types/agent';
+import { useSettings, useDebouncedSetting } from '@/components/settings-context';
+import {
+  AGENT_PROVIDERS,
+  type AgentProvider,
+  type AgentSettings,
+  type ApprovalMode,
+  type MCPServerConfig,
+  type ProviderApiKeys,
+  type SearchProvider,
+} from '@/types/agent';
 
 // =============================================================================
 // MCP Connections Card
@@ -45,39 +53,25 @@ import { AGENT_PROVIDERS, type AgentSettings, type ProviderApiKeys, type MCPServ
 /**
  * MCP Connections Card - Configure external MCP servers the agent connects to
  */
-function MCPConnectionsCard({ agentSettings, updateSetting, isLoading }: {
+function MCPConnectionsCard({ agentSettings, isLoading }: {
   agentSettings: AgentSettings;
-  updateSetting: (key: 'agent', value: AgentSettings) => Promise<void>;
   isLoading: boolean;
 }) {
+  const { updateSetting } = useSettings();
+  const saveServers = (servers: MCPServerConfig[]) => updateSetting('agent.mcpServers', servers);
   const [editingServer, setEditingServer] = useState<MCPServerConfig | null>(null);
   const [isAdding, setIsAdding] = useState(false);
 
   const mcpServers: MCPServerConfig[] = agentSettings?.mcpServers || [];
 
-  const handleAddServer = async () => {
-    const newServer: MCPServerConfig = {
-      id: crypto.randomUUID().replace(/-/g, '').substring(0, 12),
-      name: editingServer?.name || 'New Server',
-      url: editingServer?.url || '',
-      transportType: editingServer?.transportType || 'sse',
-      enabled: true,
-      apiKey: editingServer?.apiKey || undefined,
-    };
-    const newServers = [...mcpServers, newServer];
-    await updateSetting('agent', { ...agentSettings, mcpServers: newServers });
-    setEditingServer(null);
-    setIsAdding(false);
-  };
-
   const handleUpdateServer = async (id: string, updates: Partial<MCPServerConfig>) => {
     const newServers = mcpServers.map(s => s.id === id ? { ...s, ...updates } : s);
-    await updateSetting('agent', { ...agentSettings, mcpServers: newServers });
+    await saveServers(newServers);
   };
 
   const handleRemoveServer = async (id: string) => {
     const newServers = mcpServers.filter(s => s.id !== id);
-    await updateSetting('agent', { ...agentSettings, mcpServers: newServers });
+    await saveServers(newServers);
   };
 
   const handleSaveEdit = async () => {
@@ -87,7 +81,7 @@ function MCPConnectionsCard({ agentSettings, updateSetting, isLoading }: {
       await handleUpdateServer(editingServer.id, editingServer);
     } else {
       const newServers = [...mcpServers, editingServer];
-      await updateSetting('agent', { ...agentSettings, mcpServers: newServers });
+      await saveServers(newServers);
     }
     setEditingServer(null);
     setIsAdding(false);
@@ -202,7 +196,7 @@ function MCPConnectionsCard({ agentSettings, updateSetting, isLoading }: {
               <Input
                 type="password"
                 value={editingServer?.apiKey || ''}
-                onChange={(e) => setEditingServer(prev => prev ? { ...prev, apiKey: e.target.value || undefined } : null)}
+                onChange={(e) => setEditingServer(prev => prev ? { ...prev, apiKey: e.target.value || null } : null)}
                 placeholder="Bearer token for authentication"
               />
             </div>
@@ -262,7 +256,7 @@ export function AgentPanel() {
   const [whitelistInput, setWhitelistInput] = useState('');
 
   // Get provider config from AGENT_PROVIDERS
-  const currentProvider = agentSettings?.provider || 'openai';
+  const currentProvider: AgentProvider = agentSettings?.provider || 'openai';
   const providerConfig = AGENT_PROVIDERS.find(p => p.id === currentProvider);
   const needsApiKey = providerConfig?.requiresApiKey ?? true;
   const needsBaseUrl = providerConfig?.requiresBaseUrl ?? false;
@@ -270,75 +264,35 @@ export function AgentPanel() {
   const helpText = providerConfig?.helpText;
   const defaultBaseUrl = providerConfig?.defaultBaseUrl;
 
-  // Get current API key for the selected provider
-  const currentApiKey = agentSettings?.apiKeys?.[currentProvider as keyof ProviderApiKeys] || '';
+  // Text fields are saved after the user stops typing, one field at a time.
+  const [model, setModel] = useDebouncedSetting('agent.model');
+  const apiKeyPath = `agent.apiKeys.${currentProvider}` as 'agent.apiKeys.openai';
+  const [apiKey, setApiKey] = useDebouncedSetting(apiKeyPath);
+  const [baseUrl, setBaseUrl] = useDebouncedSetting('agent.baseUrl');
+  const [tavilyKey, setTavilyKey] = useDebouncedSetting('agent.tavilyApiKey');
+  const [searxngUrl, setSearxngUrl] = useDebouncedSetting('agent.searxngUrl');
+  const [mcpPort, setMcpPort] = useDebouncedSetting('agent.mcpPort');
 
-  const handleProviderChange = async (value: string) => {
-    // When switching providers, keep the model if the same model works, otherwise prompt for new one
-    const newSettings = {
-      ...agentSettings,
-      provider: value,
-      // Keep model if user typed something, otherwise clear for new provider
-      model: agentSettings?.model || '',
-    };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleModelChange = async (value: string) => {
-    const newSettings = { ...agentSettings, model: value };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleApprovalModeChange = async (value: string) => {
-    const newSettings = { ...agentSettings, approvalMode: value };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleSearchProviderChange = async (value: string) => {
-    const newSettings = { ...agentSettings, searchProvider: value };
-    await updateSetting('agent', newSettings);
-  };
-
-
-
-  const handleApiKeyChange = async (value: string) => {
-    // Update the API key for the current provider
-    const newApiKeys = {
-      ...(agentSettings?.apiKeys || {}),
-      [currentProvider]: value || undefined,
-    };
-    const newSettings = { ...agentSettings, apiKeys: newApiKeys };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleBaseUrlChange = async (value: string) => {
-    const newSettings = { ...agentSettings, baseUrl: value || undefined };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleTavilyKeyChange = async (value: string) => {
-    const newSettings = { ...agentSettings, tavilyApiKey: value || undefined };
-    await updateSetting('agent', newSettings);
-  };
-
-  const handleSearxngUrlChange = async (value: string) => {
-    const newSettings = { ...agentSettings, searxngUrl: value || undefined };
-    await updateSetting('agent', newSettings);
-  };
+  const handleProviderChange = (value: string) => updateSetting('agent.provider', value as AgentProvider);
+  const handleApprovalModeChange = (value: string) => updateSetting('agent.approvalMode', value as ApprovalMode);
+  const handleSearchProviderChange = (value: string) => updateSetting('agent.searchProvider', value as SearchProvider);
 
   const addWhitelistPattern = async () => {
-    if (!whitelistInput.trim()) return;
-    const newPatterns = [...(agentSettings?.whitelistedCommands || []), whitelistInput.trim()];
-    const newSettings = { ...agentSettings, whitelistedCommands: newPatterns };
-    await updateSetting('agent', newSettings);
+    const pattern = whitelistInput.trim();
+    if (!pattern) return;
+    try {
+      new RegExp(pattern);
+    } catch {
+      return; // invalid regex: keep it in the input so the user can fix it
+    }
+    await updateSetting('agent.whitelistedCommands', [...(agentSettings?.whitelistedCommands || []), pattern]);
     setWhitelistInput('');
   };
 
   const removeWhitelistPattern = async (index: number) => {
-    const newPatterns = [...(agentSettings?.whitelistedCommands || [])];
-    newPatterns.splice(index, 1);
-    const newSettings = { ...agentSettings, whitelistedCommands: newPatterns };
-    await updateSetting('agent', newSettings);
+    const patterns = [...(agentSettings?.whitelistedCommands || [])];
+    patterns.splice(index, 1);
+    await updateSetting('agent.whitelistedCommands', patterns);
   };
 
   // Count configured providers (those with API keys)
@@ -389,8 +343,8 @@ export function AgentPanel() {
             <div className="space-y-2">
               <Label>Model</Label>
               <Input
-                value={agentSettings?.model || ''}
-                onChange={(e) => handleModelChange(e.target.value)}
+                value={model || ''}
+                onChange={(e) => setModel(e.target.value)}
                 placeholder={modelPlaceholder}
               />
             </div>
@@ -402,8 +356,8 @@ export function AgentPanel() {
               <div className="flex gap-2">
                 <Input
                   type={apiKeyVisible ? 'text' : 'password'}
-                  value={currentApiKey}
-                  onChange={(e) => handleApiKeyChange(e.target.value)}
+                  value={apiKey || ''}
+                  onChange={(e) => setApiKey(e.target.value || null)}
                   placeholder="Enter API key..."
                 />
                 <Button
@@ -424,8 +378,8 @@ export function AgentPanel() {
             <div className="space-y-2">
               <Label>Base URL</Label>
               <Input
-                value={agentSettings?.baseUrl || ''}
-                onChange={(e) => handleBaseUrlChange(e.target.value)}
+                value={baseUrl || ''}
+                onChange={(e) => setBaseUrl(e.target.value || null)}
                 placeholder={defaultBaseUrl || 'https://api.example.com'}
               />
             </div>
@@ -547,8 +501,8 @@ export function AgentPanel() {
               <Label>Tavily API Key</Label>
               <Input
                 type="password"
-                value={agentSettings?.tavilyApiKey || ''}
-                onChange={(e) => handleTavilyKeyChange(e.target.value)}
+                value={tavilyKey || ''}
+                onChange={(e) => setTavilyKey(e.target.value || null)}
                 placeholder="tvly-..."
               />
               <p className="text-xs text-muted-foreground">
@@ -561,8 +515,8 @@ export function AgentPanel() {
             <div className="space-y-2">
               <Label>SearXNG Instance URL</Label>
               <Input
-                value={agentSettings?.searxngUrl || ''}
-                onChange={(e) => handleSearxngUrlChange(e.target.value)}
+                value={searxngUrl || ''}
+                onChange={(e) => setSearxngUrl(e.target.value || null)}
                 placeholder="https://your-searxng-instance.com"
               />
             </div>
@@ -598,13 +552,11 @@ export function AgentPanel() {
               id="mcp-enabled"
               checked={agentSettings?.mcpServerEnabled || false}
               onCheckedChange={async (checked) => {
-                // Auto-generate API key if enabling and none exists
-                let newSettings = { ...agentSettings, mcpServerEnabled: checked };
+                // Generate the key before enabling so the server can start immediately
                 if (checked && !agentSettings?.mcpApiKey) {
-                  const apiKey = crypto.randomUUID().replace(/-/g, '');
-                  newSettings = { ...newSettings, mcpApiKey: apiKey };
+                  await updateSetting('agent.mcpApiKey', crypto.randomUUID().replace(/-/g, ''));
                 }
-                await updateSetting('agent', newSettings);
+                await updateSetting('agent.mcpServerEnabled', checked);
               }}
               disabled={isLoading}
             />
@@ -634,11 +586,7 @@ export function AgentPanel() {
                   <Button
                     variant="outline"
                     size="icon"
-                    onClick={async () => {
-                      const newKey = crypto.randomUUID().replace(/-/g, '');
-                      const newSettings = { ...agentSettings, mcpApiKey: newKey };
-                      await updateSetting('agent', newSettings);
-                    }}
+                    onClick={() => updateSetting('agent.mcpApiKey', crypto.randomUUID().replace(/-/g, ''))}
                     title="Generate new key"
                   >
                     <RefreshCw className="h-4 w-4" />
@@ -653,11 +601,10 @@ export function AgentPanel() {
                 <Label>Port</Label>
                 <Input
                   type="number"
-                  value={agentSettings?.mcpPort || 8377}
-                  onChange={async (e) => {
-                    const port = parseInt(e.target.value) || 8377;
-                    const newSettings = { ...agentSettings, mcpPort: port };
-                    await updateSetting('agent', newSettings);
+                  value={mcpPort || 8377}
+                  onChange={(e) => {
+                    const port = parseInt(e.target.value);
+                    if (port >= 1024 && port <= 65535) setMcpPort(port);
                   }}
                   min={1024}
                   max={65535}
@@ -668,6 +615,21 @@ export function AgentPanel() {
                 </p>
               </div>
 
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <div>
+                  <Label htmlFor="mcp-remote" className="text-sm font-medium">Allow network access</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Listen on all network interfaces instead of only this computer (127.0.0.1)
+                  </p>
+                </div>
+                <Switch
+                  id="mcp-remote"
+                  checked={agentSettings?.mcpAllowRemote || false}
+                  onCheckedChange={(checked) => updateSetting('agent.mcpAllowRemote', checked)}
+                  disabled={isLoading}
+                />
+              </div>
+
               <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
@@ -676,8 +638,9 @@ export function AgentPanel() {
                       Security Note
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Requires app restart to apply changes. For remote access, use HTTPS via a reverse proxy.
-                      Commands execute based on your approval mode settings.
+                      MCP clients can run PowerShell commands and edit files on this machine without
+                      approval. Only give the key to clients you trust. Changes apply immediately.
+                      For network access, prefer an HTTPS reverse proxy.
                     </p>
                   </div>
                 </div>
@@ -688,7 +651,7 @@ export function AgentPanel() {
       </Card>
 
       {/* MCP Connections (Client) */}
-      <MCPConnectionsCard agentSettings={agentSettings} updateSetting={updateSetting} isLoading={isLoading} />
+      <MCPConnectionsCard agentSettings={agentSettings} isLoading={isLoading} />
     </div>
   );
 }

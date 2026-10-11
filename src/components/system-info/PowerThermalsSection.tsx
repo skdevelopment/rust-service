@@ -17,6 +17,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { SystemInfo } from '@/types';
 import { formatUptime } from '@/types';
 import { SectionHeader, InfoRow } from '@/components/system-info/system-info-helpers';
+import { num } from '@/lib/utils';
 
 interface PowerThermalsSectionProps {
   systemInfo: SystemInfo;
@@ -50,35 +51,35 @@ export function PowerThermalsSection({ systemInfo }: PowerThermalsSectionProps) 
                   <span className="font-medium flex items-center gap-2">
                     <Badge
                       variant={battery.state === 'Charging' ? 'default' :
-                               battery.stateOfCharge < 0.2 ? 'destructive' : 'secondary'}
+                               num(battery.stateOfCharge) < 0.2 ? 'destructive' : 'secondary'}
                     >
                       {battery.state}
                     </Badge>
-                    {(battery.stateOfCharge * 100).toFixed(0)}%
+                    {(num(battery.stateOfCharge) * 100).toFixed(0)}%
                   </span>
                 </div>
-                <Progress value={battery.stateOfCharge * 100} className="h-2" />
+                <Progress value={num(battery.stateOfCharge) * 100} className="h-2" />
               </div>
               <Separator className="my-2" />
               <InfoRow
                 label="Capacity"
-                value={`${battery.energyWh.toFixed(1)} / ${battery.energyFullWh.toFixed(1)} Wh`}
+                value={`${num(battery.energyWh).toFixed(1)} / ${num(battery.energyFullWh).toFixed(1)} Wh`}
               />
               <InfoRow
                 label="Design Capacity"
-                value={`${battery.energyFullDesignWh.toFixed(1)} Wh`}
+                value={`${num(battery.energyFullDesignWh).toFixed(1)} Wh`}
               />
               <InfoRow
                 label="Health"
-                value={`${(battery.stateOfHealth * 100).toFixed(0)}%`}
+                value={`${(num(battery.stateOfHealth) * 100).toFixed(0)}%`}
               />
               <InfoRow
                 label="Power"
-                value={`${battery.powerRateW.toFixed(1)} W`}
+                value={`${num(battery.powerRateW).toFixed(1)} W`}
               />
               <InfoRow
                 label="Voltage"
-                value={`${battery.voltage.toFixed(2)} V`}
+                value={`${num(battery.voltage).toFixed(2)} V`}
               />
               {battery.cycleCount && (
                 <InfoRow label="Cycles" value={battery.cycleCount.toString()} />

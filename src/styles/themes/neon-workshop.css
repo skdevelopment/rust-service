@@ -1,0 +1,75 @@
+/* =============================================================================
+   Neon Workshop Theme (Vivid green on deep dark — workbench LEDs)
+   Apply with: .theme-neon-workshop on <html>
+   ============================================================================= */
+
+.theme-neon-workshop {
+  --background: #f0f7f1;
+  --foreground: #0d120e;
+  --card: #ffffff;
+  --card-foreground: #0d120e;
+  --popover: #ffffff;
+  --popover-foreground: #0d120e;
+  --primary: #2db854;
+  --primary-foreground: #f0f7f1;
+  --secondary: #ddf0e0;
+  --secondary-foreground: #0d120e;
+  --muted: #ddf0e0;
+  --muted-foreground: #4a6a50;
+  --accent: #d0e8d4;
+  --accent-foreground: #0d120e;
+  --destructive: #e04848;
+  --destructive-foreground: #ffffff;
+  --border: #c0dcc4;
+  --input: #d0e8d4;
+  --ring: #2db854;
+  --chart-1: #2db854;
+  --chart-2: #22b8a0;
+  --chart-3: #d4c033;
+  --chart-4: #e04848;
+  --chart-5: #6a8ec8;
+  --sidebar: #ddf0e0;
+  --sidebar-foreground: #0d120e;
+  --sidebar-primary: #2db854;
+  --sidebar-primary-foreground: #f0f7f1;
+  --sidebar-accent: #d0e8d4;
+  --sidebar-accent-foreground: #0d120e;
+  --sidebar-border: #c0dcc4;
+  --sidebar-ring: #2db854;
+  --radius: 0.625rem;
+}
+
+.theme-neon-workshop.dark {
+  --background: #0d120e;
+  --foreground: #e6f0e8;
+  --card: #131a14;
+  --card-foreground: #e6f0e8;
+  --popover: #131a14;
+  --popover-foreground: #e6f0e8;
+  --primary: #3ddc6a;
+  --primary-foreground: #0a1a0e;
+  --secondary: #1e2e20;
+  --secondary-foreground: #e6f0e8;
+  --muted: #101710;
+  --muted-foreground: #6a8a6e;
+  --accent: #1e2e20;
+  --accent-foreground: #e6f0e8;
+  --destructive: #e04848;
+  --destructive-foreground: #ffffff;
+  --border: #1e2e20;
+  --input: #1e2e20;
+  --ring: #3ddc6a;
+  --chart-1: #50ee7e;
+  --chart-2: #40d4bc;
+  --chart-3: #d4c033;
+  --chart-4: #e06060;
+  --chart-5: #7aa0d8;
+  --sidebar: #101710;
+  --sidebar-foreground: #e6f0e8;
+  --sidebar-primary: #3ddc6a;
+  --sidebar-primary-foreground: #0a1a0e;
+  --sidebar-accent: #1e2e20;
+  --sidebar-accent-foreground: #e6f0e8;
+  --sidebar-border: #1e2e20;
+  --sidebar-ring: #3ddc6a;
+}

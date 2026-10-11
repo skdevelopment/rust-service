@@ -48,28 +48,18 @@ jobs:
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "📦 Building version: ${VERSION} (tag: ${TAG_NAME})"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
+          bun-version: latest
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
+      - name: Cache Bun install cache
         uses: actions/cache@v4
         with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-
+            ${{ runner.os }}-bun-
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -88,7 +78,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Sync version numbers
         shell: bash
@@ -96,7 +86,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
 
           # Update package.json
-          node -e "
+          bun -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             pkg.version = '${VERSION}';
@@ -104,7 +94,7 @@ jobs:
           "
 
           # Update tauri.conf.json
-          node -e "
+          bun -e "
             const fs = require('fs');
             const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
             conf.version = '${VERSION}';
@@ -117,7 +107,7 @@ jobs:
           echo "✅ Synced all version files to ${VERSION}"
 
       - name: Build Tauri app
-        run: pnpm tauri build
+        run: bun tauri build
 
       - name: Prepare release artifacts
         id: artifacts

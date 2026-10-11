@@ -3,18 +3,13 @@
 //! Runs Windows built-in `chkdsk.exe` to check filesystem integrity.
 //! Supports three modes: read_only, fix_errors (/f), and comprehensive (/f /r).
 
-use std::process::{Command, Stdio};
-use std::time::Instant;
-
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, SelectOption, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
-    ServiceResult,
+    FindingSeverity, OptionType, SelectOption, ServiceDefinition, ServiceFinding,
+    ServiceOptionSchema, ServiceResult,
 };
 
 // =============================================================================
@@ -36,7 +31,7 @@ impl Service for ChkdskService {
                 ServiceOptionSchema {
                     id: "drive".to_string(),
                     label: "Drive".to_string(),
-                    option_type: "string".to_string(),
+                    option_type: OptionType::String,
                     default_value: json!("C:"),
                     min: None,
                     max: None,
@@ -46,7 +41,7 @@ impl Service for ChkdskService {
                 ServiceOptionSchema {
                     id: "mode".to_string(),
                     label: "Check Mode".to_string(),
-                    option_type: "select".to_string(),
+                    option_type: OptionType::Select,
                     default_value: json!("read_only"),
                     min: None,
                     max: None,
@@ -71,7 +66,7 @@ impl Service for ChkdskService {
                 ServiceOptionSchema {
                     id: "schedule_if_busy".to_string(),
                     label: "Schedule if Volume Busy".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(false),
                     min: None,
                     max: None,
@@ -88,25 +83,7 @@ impl Service for ChkdskService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "chkdsk";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // Parse options
         let drive = normalize_drive(
             options
@@ -123,16 +100,12 @@ impl Service for ChkdskService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        emit_log(
-            &format!("Starting CHKDSK on {} (mode: {})", drive, mode),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Starting CHKDSK on {} (mode: {})", drive, mode));
 
         // Validate mode
         if !["read_only", "fix_errors", "comprehensive"].contains(&mode) {
-            emit_log(&format!("ERROR: Invalid mode: {}", mode), &mut logs, app);
-            findings.push(ServiceFinding {
+            ctx.log(format!("ERROR: Invalid mode: {}", mode));
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Error,
                 title: "Invalid Mode".to_string(),
                 description: format!(
@@ -142,15 +115,7 @@ impl Service for ChkdskService {
                 recommendation: None,
                 data: Some(json!({"type": "error", "reason": "invalid_mode"})),
             });
-            return ServiceResult {
-                service_id: service_id.to_string(),
-                success: false,
-                error: Some(format!("Invalid mode: {}", mode)),
-                duration_ms: start.elapsed().as_millis() as u64,
-                findings,
-                logs,
-                agent_analysis: None,
-            };
+            return ctx.finish(false, Some(format!("Invalid mode: {}", mode)));
         }
 
         // Build command arguments
@@ -162,38 +127,29 @@ impl Service for ChkdskService {
             args.push("/r".to_string());
         }
 
-        emit_log(
-            &format!("Running: chkdsk {}", args.join(" ")),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Running: chkdsk {}", args.join(" ")));
 
         if mode != "read_only" {
-            emit_log(
-                "Note: Fix modes may require exclusive access or reboot",
-                &mut logs,
-                app,
-            );
+            ctx.log("Note: Fix modes may require exclusive access or reboot");
         }
 
         // Execute CHKDSK
-        let mut cmd = Command::new("chkdsk");
+        let mut cmd = crate::proc::command("chkdsk");
         cmd.args(&args);
 
-        // If schedule_if_busy, we'll pipe "Y" to stdin for prompts
-        if schedule_if_busy && mode != "read_only" {
-            cmd.stdin(Stdio::piped());
-        }
+        // If the volume is busy, chkdsk asks whether to schedule the check for
+        // the next restart; answer "Y" when the user opted into that.
+        let output = if schedule_if_busy && mode != "read_only" {
+            ctx.output_with_input(&mut cmd, b"Y\r\n")
+        } else {
+            ctx.output(&mut cmd)
+        };
 
-        let output = match cmd.output() {
+        let output = match output {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run CHKDSK: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run CHKDSK: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Could not execute CHKDSK: {}", e),
@@ -202,46 +158,34 @@ impl Service for ChkdskService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("CHKDSK execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("CHKDSK execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("CHKDSK completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("CHKDSK completed with exit code: {}", exit_code));
 
         // Parse output
         let parsed = parse_chkdsk_output(&stdout);
 
         // Log key findings
         if parsed.found_no_problems {
-            emit_log("No problems found on disk", &mut logs, app);
+            ctx.log("No problems found on disk");
         }
         if parsed.errors_found {
-            emit_log("Errors were detected on disk", &mut logs, app);
+            ctx.log("Errors were detected on disk");
         }
         if parsed.made_corrections {
-            emit_log("Corrections were made to the filesystem", &mut logs, app);
+            ctx.log("Corrections were made to the filesystem");
         }
         if parsed.volume_in_use {
-            emit_log("Volume is currently in use", &mut logs, app);
+            ctx.log("Volume is currently in use");
         }
         if let Some(ref fs_type) = parsed.filesystem_type {
-            emit_log(&format!("Filesystem type: {}", fs_type), &mut logs, app);
+            ctx.log(format!("Filesystem type: {}", fs_type));
         }
 
         // Determine status and create findings
@@ -309,7 +253,7 @@ impl Service for ChkdskService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -343,20 +287,15 @@ impl Service for ChkdskService {
 
         // Log stderr if present
         if !stderr.is_empty() && stderr.len() < 500 {
-            emit_log(&format!("Stderr: {}", stderr.trim()), &mut logs, app);
+            ctx.log(format!("Stderr: {}", stderr.trim()));
         }
 
-        emit_log("CHKDSK scan complete", &mut logs, app);
+        ctx.log("CHKDSK scan complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0 || parsed.found_no_problems || parsed.made_corrections,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(
+            exit_code == 0 || parsed.found_no_problems || parsed.made_corrections,
+            None,
+        )
     }
 }
 

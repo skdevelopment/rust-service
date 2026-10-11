@@ -1,22 +1,24 @@
 /**
  * Theme Provider Component
- * 
+ *
  * Provides theme context to the application with support for:
  * - Light/Dark/System mode
- * - Color schemes (e.g., Techbay, Default)
- * 
- * Integrates with the settings context for persistence.
+ * - Color schemes (e.g., Forge, Cobalt)
+ *
+ * The theme lives in settings (`appearance.theme` / `appearance.colorScheme`);
+ * this provider reads and writes it through the settings context, so the two
+ * never disagree. Must be rendered inside SettingsProvider.
  */
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { COLOR_SCHEMES } from '@/types/settings';
-import type { ThemeMode, ColorScheme, AppSettings } from '@/types/settings';
+import { createContext, useContext, useEffect, useState, type ReactNode, useCallback } from 'react';
+import { COLOR_SCHEMES, DEFAULT_APPEARANCE } from '@/types/settings';
+import type { ThemeMode, ColorScheme } from '@/types/settings';
+import { useSettings } from '@/components/settings-context';
 
 interface ThemeProviderContextType {
   /** Current theme mode (light/dark/system) */
   themeMode: ThemeMode;
-  /** Current color scheme (default, techbay, etc.) */
+  /** Current color scheme */
   colorScheme: ColorScheme;
   /** Resolved theme (always 'light' or 'dark') */
   resolvedTheme: 'light' | 'dark';
@@ -32,12 +34,6 @@ interface ThemeProviderContextType {
 
 const ThemeProviderContext = createContext<ThemeProviderContextType | undefined>(undefined);
 
-interface ThemeProviderProps {
-  children: ReactNode;
-  defaultTheme?: ThemeMode;
-  defaultColorScheme?: ColorScheme;
-}
-
 /**
  * Gets the system's preferred color scheme
  */
@@ -48,21 +44,25 @@ function getSystemTheme(): 'light' | 'dark' {
   return 'light';
 }
 
+function isColorScheme(value: unknown): value is ColorScheme {
+  return typeof value === 'string' && COLOR_SCHEMES.some(s => s.id === value);
+}
+
 /**
  * Apply theme classes to the document root
  */
 function applyTheme(resolvedTheme: 'light' | 'dark', colorScheme: ColorScheme) {
   const root = document.documentElement;
-  
-  // Remove old theme mode classes
+
   root.classList.remove('light', 'dark');
   root.classList.add(resolvedTheme);
-  
+
   // Remove old color scheme classes (all theme-* classes)
-  const classesToRemove = Array.from(root.classList).filter(c => c.startsWith('theme-'));
-  classesToRemove.forEach(c => root.classList.remove(c));
-  
-  // Apply new color scheme (skip 'default' as it uses :root)
+  Array.from(root.classList)
+    .filter(c => c.startsWith('theme-'))
+    .forEach(c => root.classList.remove(c));
+
+  // 'default' uses the :root variables
   if (colorScheme !== 'default') {
     root.classList.add(`theme-${colorScheme}`);
   }
@@ -71,91 +71,37 @@ function applyTheme(resolvedTheme: 'light' | 'dark', colorScheme: ColorScheme) {
 /**
  * ThemeProvider component that wraps the application and provides theme context
  */
-export function ThemeProvider({ 
-  children, 
-  defaultTheme = 'system',
-  defaultColorScheme = 'default'
-}: ThemeProviderProps) {
-  const [themeMode, setThemeModeState] = useState<ThemeMode>(defaultTheme);
-  const [colorScheme, setColorSchemeState] = useState<ColorScheme>(defaultColorScheme);
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(getSystemTheme());
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const { settings, updateSetting } = useSettings();
+  const themeMode: ThemeMode = settings.appearance?.theme ?? DEFAULT_APPEARANCE.theme ?? 'system';
+  const storedScheme = settings.appearance?.colorScheme;
+  const colorScheme: ColorScheme = isColorScheme(storedScheme) ? storedScheme : DEFAULT_APPEARANCE.colorScheme as ColorScheme;
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(getSystemTheme);
 
-  // Load saved settings on mount
+  // Follow the OS theme while in 'system' mode
   useEffect(() => {
-    async function loadSettings() {
-      try {
-        const settings = await invoke<AppSettings>('get_settings');
-        // Handle both old and new format
-        const savedTheme = settings?.appearance?.theme || 
-          (settings as unknown as { theme?: ThemeMode })?.theme;
-        const savedScheme = settings?.appearance?.colorScheme;
-
-        const isValidScheme = (scheme: unknown): scheme is ColorScheme =>
-          typeof scheme === 'string' && COLOR_SCHEMES.some(s => s.id === scheme);
-        
-        if (savedTheme) {
-          setThemeModeState(savedTheme as ThemeMode);
-        }
-        if (savedScheme && isValidScheme(savedScheme)) {
-          setColorSchemeState(savedScheme);
-        } else if (savedScheme) {
-          setColorSchemeState('default');
-        }
-      } catch (error) {
-        console.warn('Failed to load theme settings:', error);
-      }
-    }
-    loadSettings();
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'dark' : 'light');
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  // Update resolved theme and apply classes when theme mode or color scheme changes
+  const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
+
   useEffect(() => {
-    const resolved = themeMode === 'system' ? getSystemTheme() : themeMode;
-    setResolvedTheme(resolved);
-    applyTheme(resolved, colorScheme);
+    applyTheme(resolvedTheme, colorScheme);
+  }, [resolvedTheme, colorScheme]);
 
-    // Listen for system theme changes when in 'system' mode
-    if (themeMode === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handleChange = (e: MediaQueryListEvent) => {
-        const newTheme = e.matches ? 'dark' : 'light';
-        setResolvedTheme(newTheme);
-        applyTheme(newTheme, colorScheme);
-      };
-      
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
-    }
-  }, [themeMode, colorScheme]);
+  const setThemeMode = useCallback((mode: ThemeMode) => {
+    updateSetting('appearance.theme', mode).catch(error => console.warn('Failed to save theme mode:', error));
+  }, [updateSetting]);
 
-  // Set theme mode and persist
-  const setThemeMode = useCallback(async (newMode: ThemeMode) => {
-    setThemeModeState(newMode);
-    try {
-      await invoke('update_setting', { 
-        key: 'appearance.theme',
-        value: JSON.stringify(newMode)
-      });
-    } catch (error) {
-      console.warn('Failed to save theme mode:', error);
-    }
-  }, []);
-
-  // Set color scheme and persist
-  const setColorScheme = useCallback(async (newScheme: ColorScheme) => {
-    setColorSchemeState(newScheme);
-    try {
-      await invoke('update_setting', { 
-        key: 'appearance.colorScheme',
-        value: JSON.stringify(newScheme)
-      });
-    } catch (error) {
-      console.warn('Failed to save color scheme:', error);
-    }
-  }, []);
+  const setColorScheme = useCallback((scheme: ColorScheme) => {
+    updateSetting('appearance.colorScheme', scheme).catch(error => console.warn('Failed to save color scheme:', error));
+  }, [updateSetting]);
 
   return (
-    <ThemeProviderContext.Provider value={{ 
+    <ThemeProviderContext.Provider value={{
       themeMode,
       colorScheme,
       resolvedTheme,
@@ -171,8 +117,7 @@ export function ThemeProvider({
 }
 
 /**
- * Hook to access theme context
- * @throws Error if used outside of ThemeProvider
+ * Hook to access the theme context
  */
 export function useTheme() {
   const context = useContext(ThemeProviderContext);

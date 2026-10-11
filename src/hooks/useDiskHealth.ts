@@ -5,8 +5,8 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import type { DiskHealthResponse } from '@/components/system-info/types';
+import { commands } from '@/bindings';
 
 export interface UseDiskHealthReturn {
   diskHealth: DiskHealthResponse | null;
@@ -21,7 +21,7 @@ export function useDiskHealth(): UseDiskHealthReturn {
   const fetchDiskHealth = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await invoke<DiskHealthResponse>('get_disk_health');
+      const result = await commands.getDiskHealth();
       setDiskHealth(result);
     } catch (err) {
       setDiskHealth({ disks: [], smartctlFound: false, error: String(err) });

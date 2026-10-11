@@ -5,6 +5,7 @@
  * with bidirectional flow between user and agent.
  */
 
+import type * as B from '@/bindings';
 // =============================================================================
 // File Categories
 // =============================================================================
@@ -12,21 +13,9 @@
 /**
  * Categories of files for specialized handling
  */
-export type FileCategory =
-  | 'text'      // Plain text files
-  | 'code'      // Source code files
-  | 'document'  // PDF, Word, etc.
-  | 'image'     // Image files
-  | 'media'     // Audio/video files
-  | 'binary';   // Binary executables, archives
+export type FileCategory = B.FileCategory;   // Binary executables, archives
 
-/**
- * Source of a file attachment
- */
-export type FileSource =
-  | 'upload'      // User uploaded
-  | 'generated'   // Agent generated
-  | 'filesystem'; // Referenced from filesystem
+ // Referenced from filesystem
 
 // =============================================================================
 // File Attachment (Unified Schema)
@@ -35,65 +24,7 @@ export type FileSource =
 /**
  * Core file attachment metadata used across the system
  */
-export interface FileAttachment {
-  // Core Identity
-  id: string;                    // UUID v4
-  source: FileSource;
-
-  // File Information
-  originalName: string;        // Original filename
-  storedName: string;          // UUID-based stored filename
-  mimeType: string;            // Detected MIME type
-  category: FileCategory;      // File category for handling
-  size: number;                // Bytes
-
-  // Storage Paths
-  storedPath: string;          // Relative to data/agent/files/
-  thumbnailPath?: string;      // Preview thumbnail path
-
-  // Content (for text/code files)
-  content?: string;            // Extracted text content
-  encoding?: string;           // Content encoding
-  lineCount?: number;          // For code files
-
-  // Metadata
-  checksum: string;            // SHA-256 hash
-  uploadedAt: string;          // ISO 8601 timestamp
-  expiresAt?: string;          // Optional expiration
-
-  // Source-specific metadata
-  uploadMetadata?: UploadMetadata;
-  generationMetadata?: GenerationMetadata;
-  filesystemMetadata?: FilesystemMetadata;
-}
-
-/**
- * Metadata for user-uploaded files
- */
-export interface UploadMetadata {
-  uploadedBy: 'user';
-  originalPath?: string;       // Original filesystem path if known
-  autoExtracted: boolean;      // Whether content was auto-extracted
-}
-
-/**
- * Metadata for agent-generated files
- */
-export interface GenerationMetadata {
-  generatedBy: 'agent';
-  description: string;         // Agent's description of the file
-  toolCallId: string;          // Reference to generating tool call
-  approved: boolean;           // Whether HITL approval was obtained
-}
-
-/**
- * Metadata for filesystem-referenced files
- */
-export interface FilesystemMetadata {
-  originalPath: string;        // Original absolute path
-  accessedAt: string;          // When agent first referenced it
-  autoRead: boolean;          // Whether content was auto-read
-}
+export type FileAttachment = B.FileAttachment_Serialize;
 
 // =============================================================================
 // File Upload State
@@ -114,109 +45,8 @@ export interface FileUploadState {
 }
 
 // =============================================================================
-// Upload Request/Response Types
-// =============================================================================
-
-/**
- * Request to upload a file (for small files < 10MB)
- */
-export interface FileUploadRequest {
-  fileName: string;
-  mimeType: string;
-  size: number;
-  contentBase64: string;       // Base64 encoded content
-}
-
-/**
- * Request to upload a chunk (for large files)
- */
-export interface FileChunkRequest {
-  uploadId: string;
-  chunkIndex: number;
-  totalChunks: number;
-  contentBase64: string;
-}
-
-/**
- * Status of a chunked upload
- */
-export interface ChunkUploadStatus {
-  uploadId: string;
-  chunksReceived: number[];
-  chunksTotal: number;
-  bytesReceived: number;
-  bytesTotal: number;
-  complete: boolean;
-}
-
-// =============================================================================
-// File Generation Types
-// =============================================================================
-
-/**
- * Request for agent to generate a file
- */
-export interface FileGenerationRequest {
-  filename: string;
-  content: string;
-  description: string;
-  mimeType?: string;
-}
-
-// =============================================================================
-// File System Reference Types
-// =============================================================================
-
-/**
- * Result of validating a filesystem path
- */
-export interface PathValidationResult {
-  valid: boolean;
-  sanitizedPath?: string;
-  error?: string;
-  withinSandbox: boolean;
-}
-
-/**
- * Request to read a file from the filesystem
- */
-export interface FilesystemReadRequest {
-  path: string;
-  autoExtract?: boolean;       // Auto-extract text content
-  maxSize?: number;            // Max bytes to read
-}
-
-// =============================================================================
 // Helper Functions
 // =============================================================================
-
-/**
- * Get file category from MIME type
- */
-export function getFileCategory(mimeType: string): FileCategory {
-  if (mimeType.startsWith('text/')) return 'text';
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) return 'media';
-
-  const codeTypes = [
-    'application/javascript',
-    'application/json',
-    'application/xml',
-    'application/x-python-code',
-    'application/x-sh',
-  ];
-  if (codeTypes.includes(mimeType) || mimeType.includes('script')) return 'code';
-
-  const docTypes = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats',
-    'application/vnd.ms-',
-  ];
-  if (docTypes.some(t => mimeType.includes(t))) return 'document';
-
-  return 'binary';
-}
 
 /**
  * Get file category from extension
@@ -257,21 +87,6 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * Check if file type should have content auto-extracted
- */
-export function shouldAutoExtractContent(category: FileCategory, mimeType: string): boolean {
-  if (category === 'text') return true;
-  if (category === 'code') return true;
-  if (mimeType === 'application/json') return true;
-  if (mimeType === 'application/xml') return true;
-  if (mimeType === 'text/plain') return true;
-  if (mimeType === 'text/markdown') return true;
-  if (mimeType === 'text/html') return true;
-  if (mimeType === 'text/css') return true;
-  return false;
-}
-
-/**
  * Get icon name for file category
  */
 export function getCategoryIcon(category: FileCategory): string {
@@ -295,12 +110,3 @@ export const FILE_SIZE_LIMITS = {
   HUGE: 1024 * 1024 * 1024,     // 1 GB - streaming only
 } as const;
 
-/**
- * Chunk size for large file uploads (1 MB)
- */
-export const CHUNK_SIZE = 1024 * 1024;
-
-/**
- * Maximum content extraction size (100 KB)
- */
-export const MAX_CONTENT_EXTRACTION_SIZE = 100 * 1024;

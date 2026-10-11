@@ -9,7 +9,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
@@ -38,6 +37,8 @@ import {
 import type { ServiceQueueItem, ServiceDefinition } from '@/types/service';
 import { getIcon } from './utils';
 import { useAnimation } from '@/components/animation-context';
+import { commands, type UsbDrive } from '@/bindings';
+import { num } from '@/lib/utils';
 
 // =============================================================================
 // Types
@@ -85,7 +86,7 @@ export function SortableQueueItem({
 
   const [estimatedMs, setEstimatedMs] = useState<number | null>(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
-  const [usbDrives, setUsbDrives] = useState<Array<{ mountPoint: string; name: string; totalSpaceGb: number; availableSpaceGb: number; fileSystem: string }>>([]);
+  const [usbDrives, setUsbDrives] = useState<UsbDrive[]>([]);
   const [usbLoading, setUsbLoading] = useState(false);
 
   // Fetch USB drives when a usb_drive option is present
@@ -95,7 +96,7 @@ export function SortableQueueItem({
     const loadDrives = async () => {
       setUsbLoading(true);
       try {
-        const drives = await invoke<Array<{ mountPoint: string; name: string; totalSpaceGb: number; availableSpaceGb: number; fileSystem: string }>>('list_usb_drives');
+        const drives = await commands.listUsbDrives();
         setUsbDrives(drives);
       } catch (err) {
         console.error('Failed to list USB drives:', err);
@@ -110,7 +111,7 @@ export function SortableQueueItem({
   const refreshUsbDrives = async () => {
     setUsbLoading(true);
     try {
-      const drives = await invoke<Array<{ mountPoint: string; name: string; totalSpaceGb: number; availableSpaceGb: number; fileSystem: string }>>('list_usb_drives');
+      const drives = await commands.listUsbDrives();
       setUsbDrives(drives);
     } catch (err) {
       console.error('Failed to refresh USB drives:', err);
@@ -125,11 +126,7 @@ export function SortableQueueItem({
     setEstimateLoading(true);
     const fetchEstimate = async () => {
       try {
-        const ms = await invoke<number>('get_estimated_time', {
-          serviceId: item.serviceId,
-          options: item.options,
-          defaultSecs: definition.estimatedDurationSecs,
-        });
+        const ms = await commands.getEstimatedTime(item.serviceId, item.options ?? null, definition.estimatedDurationSecs);
         if (active) {
           setEstimatedMs(ms);
           setEstimateLoading(false);
@@ -174,7 +171,7 @@ export function SortableQueueItem({
   };
 
   const Wrapper = animationsEnabled ? motion.div : 'div' as unknown as typeof motion.div;
-  const layoutProps = animationsEnabled ? { layout: true as const, transition: { layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] } } } : {};
+  const layoutProps = animationsEnabled ? { layout: true as const, transition: { layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] } } } : {};
 
   return (
     <Wrapper
@@ -322,7 +319,7 @@ export function SortableQueueItem({
                             <SelectItem value="__auto__">Auto-detect first USB drive</SelectItem>
                             {usbDrives.map((d) => (
                               <SelectItem key={d.mountPoint} value={d.mountPoint}>
-                                {d.mountPoint} — {d.name} ({d.availableSpaceGb.toFixed(1)} GB free, {d.fileSystem})
+                                {d.mountPoint} — {d.name} ({num(d.availableSpaceGb).toFixed(1)} GB free, {d.fileSystem})
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -404,8 +401,8 @@ export function SortableQueueItem({
                         <Input
                           id={`${item.id}-${opt.id}`}
                           type="number"
-                          min={opt.min}
-                          max={opt.max}
+                          min={opt.min ?? undefined}
+                          max={opt.max ?? undefined}
                           value={(item.options[opt.id] as number) ?? opt.defaultValue}
                           onChange={(e) =>
                             onOptionsChange(item.id, {

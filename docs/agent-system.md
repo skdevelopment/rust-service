@@ -1,515 +1,169 @@
-# Agent System Documentation
+# Agent System
 
-The Agent tab provides an agentic AI assistant with human-in-the-loop command execution, persistent memory, and web search capabilities. Inspired by Agent Zero, it features smart memory management, auto-solution saving, context compression, and behavior learning.
+The Agent tab is an AI assistant for repair technicians. It runs on the
+technician's configured model (OpenAI, Anthropic, Google, xAI, Mistral,
+DeepSeek, Groq, OpenRouter, Ollama or any OpenAI-compatible endpoint) through
+the Vercel AI SDK, and acts on the machine through tools. Anything that changes
+the system waits for the technician's approval unless the approval mode says
+otherwise.
 
-**Designed for Computer Repair Technicians**: The memory system is portable-first, distinguishing between knowledge that travels with you (solutions, preferences) and information specific to the current client's machine (system state, diagnostics).
-
-## Overview
-
-The Agent is a conversational AI that can:
-- Execute shell commands (with approval)
-- Search the web for solutions
-- Remember information across sessions using vector embeddings
-- **Portable memory** - Solutions and knowledge travel with your USB drive
-- **Machine-specific context** - System state stays tied to each client's computer
-- Access CLI tools in the programs folder
-- Read and write files
-- Automatically save successful solutions
-- Extract and remember facts from conversations
-- Adjust its own behavior based on feedback
-- Compress conversation context for long discussions
-- Query knowledge base documents
-
-**Architecture**: Frontend (React + Vercel AI SDK) ↔ Tauri Commands (Rust) ↔ System
-
-## Key Files
-
-### Frontend
+## Key files
 
 | File | Purpose |
 |------|---------|
-| `src/pages/AgentPage.tsx` | Main chat interface, agent loop, tool execution |
-| `src/hooks/useConversations.ts` | Conversation lifecycle (save, load, create) |
-| `src/hooks/useServiceSupervision.ts` | Service run event listeners and state |
-| `src/lib/agent-tools.ts` | Vercel AI SDK tool definitions (30+ tools) |
-| `src/lib/agent-chat.ts` | Multi-provider streaming with `streamText()` |
-| `src/lib/agent-activity-utils.ts` | Tool-to-activity mapping and validation |
-| `src/lib/agent-loop-queue.ts` | Serialized agent loop with service update coalescing |
-| `src/lib/agent-heartbeat.ts` | Watchdog detecting stalled agent loops |
-| `src/lib/mcp-manager.ts` | MCP client for connecting to external servers |
-| `src/components/agent/ChatMessage.tsx` | Message rendering with interleaved text/tool parts |
-| `src/components/agent/AgentActivityItem.tsx` | Tool call status display with approve/reject UI |
-| `src/components/agent/ServiceRunMonitor.tsx` | Live service run progress monitor |
-| `src/types/agent.ts` | TypeScript type definitions |
-| `src/types/agent-activity.ts` | Activity type definitions (24 types) |
+| `src/components/agent-session-context.tsx` | The agent session: conversation state, the turn loop, approvals, Stop/Clear, MCP connections, service-run supervision |
+| `src/lib/agent-tools.ts` | **The tool registry** — every tool's schema, approval rule, activity card mapping, sidebar label and executor |
+| `src/lib/agent-chat.ts` | Provider/model creation, system prompt, `streamChat`, legacy history normalization |
+| `src/lib/agent-conversations.ts` | Saving/loading conversations and rebuilding chat messages from history |
+| `src/lib/mcp-manager.ts` | Connections to external MCP servers (agent as MCP client) |
+| `src/pages/AgentPage.tsx` | The chat view (state lives in the session, not the page) |
+| `src/components/agent/*` | Message list, activity/approval cards, input area, sidebar |
+| `src-tauri/src/commands/agent/` | Backend commands: shell execution, file tools, attachments, conversations, web search |
+| `src-tauri/src/mcp/` | The built-in MCP server (agent as MCP server for external LLMs) |
 
-### Backend
+## Session and turn loop
 
-| File | Purpose |
-|------|---------|
-| `src-tauri/src/commands/agent/mod.rs` | Shared state, DB helpers, re-exports |
-| `src-tauri/src/commands/agent/commands.rs` | Command execution and approval workflow |
-| `src-tauri/src/commands/agent/memory.rs` | Memory CRUD and vector search |
-| `src-tauri/src/commands/agent/files.rs` | File ops, instruments, programs, grep, glob |
-| `src-tauri/src/commands/agent/attachments.rs` | File attachment upload and generation |
-| `src-tauri/src/commands/agent/conversations.rs` | Conversation persistence |
-| `src-tauri/src/commands/agent/search.rs` | Web search (Tavily, SearXNG) |
-| `src-tauri/src/types/agent.rs` | Rust type definitions |
-| `src-tauri/src/mcp/server.rs` | MCP HTTP server with bearer auth |
-| `src-tauri/src/mcp/tools.rs` | MCP tool implementations |
+`AgentSessionProvider` is mounted in `App.tsx` above the tab switcher, so
+switching tabs never interrupts a turn, loses a pending approval, or drops
+service-run updates. All turns go through **one serialized dispatch queue**.
 
----
+A turn:
 
-## Memory System (Agent Zero-Inspired)
+1. calls `streamText` with the history and the tool set from the registry;
+2. renders the stream (text, tool calls, results, tool errors);
+3. appends the SDK's own `response.messages` to the history — every executed
+   tool call, tool error and invalid call (unknown tool, arguments failing the
+   schema) is paired with a result, so the history sent to the provider is
+   always well-formed;
+4. handles calls to approval tools (which have no `execute` in the SDK):
+   auto-approved ones run immediately; otherwise the turn **suspends** with
+   status `awaiting_approval` until the technician approves or denies each one,
+   then their results are appended and the turn continues.
 
-### Portable Memory Design
+While a turn is suspended the input is disabled (sending a message then would
+leave tool calls without results).
 
-Since RustService is designed for computer repair technicians who run the tool on multiple client machines, the memory system distinguishes between:
+**Stop** aborts the stream (the AI SDK v5 stream ends with an `abort` part
+rather than throwing), drops queued jobs, records "stopped" results for any
+pending approvals and never auto-continues. **Clear** stops and starts a new
+conversation.
 
-| Scope | Description | Use Case |
-|-------|-------------|----------|
-| **Global** | Travels with you on USB | Solutions, knowledge, technician preferences, behaviors |
-| **Machine** | Stays with current computer | System state, diagnostics, local conversation context |
+## Tools
 
-When you plug your USB into a new client's computer:
-- ✅ Your learned solutions, knowledge base, and preferences are available
-- ✅ You can recall fixes that worked on other machines
-- ❌ You won't see system info from other clients (privacy + relevance)
-- ❌ Old conversation context stays with the machine it was about
+Tools are defined once in `AGENT_TOOLS` (`src/lib/agent-tools.ts`):
 
-### Memory Types
-
-| Type | Default Scope | Purpose |
-|------|---------------|---------|
-| `fact` | **Global** | User-provided information (names, API keys, technician preferences) |
-| `solution` | **Global** | Successful solutions from past interactions (portable!) |
-| `knowledge` | **Global** | Knowledge base documents (RAG) |
-| `behavior` | **Global** | Agent behavior adjustments and personality rules |
-| `instruction` | **Global** | Behavioral rules and user instructions |
-| `conversation` | Machine | Context fragments from chats (about current computer) |
-| `summary` | Machine | Conversation summaries for context compression |
-| `system` | Machine | System state snapshots (this computer's info) |
-
-### Memory Metadata
-
-Each memory can include:
-- `importance` (0-100): Priority score for retrieval
-- `accessCount`: How often the memory has been used
-- `lastAccessed`: Timestamp of last access
-- `sourceConversationId`: Link to originating conversation
-- `tags`: Array of categorization tags
-- `scope`: "global" or "machine" (portability)
-- `machineId`: Computer name (for machine-scoped memories)
-
-### Smart Memory Features
-
-#### Auto-Solution Memorization
-When enabled, the agent automatically saves successful fixes:
-1. Agent runs a command to fix an issue
-2. If the command succeeds (exit code 0)
-3. The problem + solution is saved as a `solution` memory
-4. Future similar issues can recall this solution
-
-#### Auto-Fact Extraction
-Extract key facts from conversations:
-- User preferences and requirements
-- System information mentioned
-- Important context for future reference
-
-#### System State Learning
-When the agent runs system info commands:
-- Results are saved as `system` memories
-- Future queries can recall without re-running commands
-- Reduces need for repeated diagnostic commands
-
-### Storage
-
-- **Location**: `data/agent/memory.db` (SQLite database)
-- **Schema**: Enhanced with importance, access tracking, embeddings, scope
-- **Vector Search**: Cosine similarity for semantic search
-- **Portability**: Single file, copies with USB drive
-- **Machine ID**: Uses computer name (COMPUTERNAME env var) to identify machines
-- **Scope Filtering**: Queries automatically filter machine-scoped memories to current computer
-
----
-
-## Tauri Command Reference
-
-### Command Execution
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `queue_agent_command` | `command`, `reason` | Queue a command for approval |
-| `execute_agent_command` | `command`, `reason` | Execute directly (bypasses approval) |
-| `get_pending_commands` | - | Get all pending commands |
-| `approve_command` | `command_id` | Approve and execute command |
-| `reject_command` | `command_id` | Reject a pending command |
-| `get_command_history` | `limit?` | Get executed command history |
-
-### Memory Operations
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `save_memory` | `memory_type`, `content`, `metadata?`, `embedding?`, `importance?`, `source_conversation_id?`, `scope?` | Save to memory (scope: "global" or "machine") |
-| `search_memories` | `query`, `memory_type?`, `limit?` | Search memories by content (auto-filters by scope) |
-| `search_memories_vector` | `embedding`, `memory_type?`, `limit?` | Semantic search by vector (auto-filters by scope) |
-| `get_all_memories` | `memory_type?`, `limit?` | Get all memories (auto-filters by scope) |
-| `update_memory` | `memory_id`, `content?`, `metadata?`, `importance?` | Update existing memory |
-| `delete_memory` | `memory_id` | Delete a memory |
-| `bulk_delete_memories` | `memory_ids` | Delete multiple memories |
-| `clear_all_memories` | - | Clear all memories |
-| `get_memory_stats` | - | Get memory statistics |
-| `increment_memory_access` | `memory_id` | Track memory usage |
-| `get_recent_memories` | `limit?` | Get recently accessed memories (auto-filters by scope) |
-| `get_machine_id` | - | Get current computer's identifier |
-
-### Search
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `search_tavily` | `query`, `api_key` | Search via Tavily API |
-| `search_searxng` | `query`, `instance_url` | Search via SearXNG instance |
-
-### Files & Programs
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `agent_read_file` | `path` | Read file contents |
-| `agent_write_file` | `path`, `content` | Write file contents |
-| `agent_list_dir` | `path` | List directory contents |
-| `agent_move_file` | `src`, `dest` | Move/rename file |
-| `agent_copy_file` | `src`, `dest` | Copy file |
-| `list_agent_programs` | - | List programs in data/programs/ |
-| `list_instruments` | - | List custom scripts in data/instruments/ |
-
-### Conversations
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `create_conversation` | `title?` | Create new conversation |
-| `list_conversations` | `limit?` | List all conversations |
-| `get_conversation` | `conversation_id` | Get conversation with messages |
-| `save_conversation_messages` | `conversation_id`, `messages` | Save messages to conversation |
-| `update_conversation_title` | `conversation_id`, `title` | Update conversation title |
-| `delete_conversation` | `conversation_id` | Delete conversation |
-
----
-
-## AI SDK Tools
-
-### HITL Tools (Require Approval)
-
-These tools have no `execute` function — the frontend renders an approve/reject UI.
-
-| Tool | Description |
-|------|-------------|
-| `execute_command` | Execute PowerShell commands |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Replace text in files (targeted edits) |
-| `generate_file` | Create downloadable files |
-| `move_file` | Move or rename files |
-| `copy_file` | Copy files |
-| `run_service_queue` | Start a service run |
-| `pause_service` | Pause running services |
-| `resume_service` | Resume paused services |
-| `cancel_service` | Cancel running services |
-
-### Auto-Execute Tools
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with pagination |
-| `list_dir` | List directory contents |
-| `grep` | Search regex across files |
-| `glob` | Find files by pattern |
-| `search_web` | Search via Tavily/SearXNG |
-| `get_system_info` | Hardware and OS details (selectable sections) |
-| `list_programs` | List portable tools in data/programs |
-| `find_exe` | Find a specific executable |
-| `list_instruments` | List custom scripts |
-| `run_instrument` | Run a custom script |
-| `list_services` | List available services |
-| `list_service_presets` | List service presets |
-| `check_service_requirements` | Verify required programs |
-| `get_service_status` | Get current service run state |
-| `get_service_report` | Get a saved report |
-| `get_report_statistics` | Get report statistics |
-| `edit_finding` | Edit a report finding |
-| `add_finding` | Add a finding to a report |
-| `remove_finding` | Remove a finding |
-| `set_report_summary` | Write report executive summary |
-| `set_service_analysis` | Write per-service analysis |
-| `set_health_score` | Set health score (0-100) |
-| `generate_report_pdf` | Generate PDF report |
-
----
-
-## Settings
-
-### Agent Settings
-
-```json
-{
-  "agent": {
-    "provider": "openai",
-    "model": "gpt-4o-mini",
-    "apiKeys": { "openai": "sk-..." },
-    "approvalMode": "always",
-    "whitelistedCommands": ["^ipconfig", "^ping "],
-    "searchProvider": "tavily",
-    "tavilyApiKey": "tvly-...",
-    "mcpServerEnabled": false,
-    "mcpApiKey": "auto-generated",
-    "mcpPort": 8377
-  }
-}
+```ts
+defineTool({
+  name: 'read_file',
+  label: 'Read File',                 // sidebar + activity card
+  summary: 'Open file contents',      // sidebar description
+  activity: 'read_file',              // activity card type
+  approval: 'auto',                   // 'auto' | 'always' | 'command'
+  description: '...',                 // sent to the model
+  input: z.object({ path: z.string().min(1) }),
+  details: a => ({ path: a.path }),   // fields shown on the card
+  run: a => commands.agentReadFile(a.path, null, null, true),
+})
 ```
 
----
+Everything else — the SDK tool set, the system prompt's tool list, the
+sidebar, activity cards and approval decisions — is derived from it. Argument
+validation lives in the zod schema, so invalid calls become tool errors the
+model can correct instead of approval cards that can never run.
 
-## Command Approval System
+Backend calls go through the generated `commands` object from
+`src/bindings.ts`, so argument names and types are checked by `tsc`.
 
-### Approval Modes
+### Approval modes
 
-| Mode | Behavior |
-|------|----------|
-| `always` | Every command requires manual approval (default, safest) |
-| `whitelist` | Commands matching whitelist patterns auto-execute |
-| `yolo` | All commands auto-execute (⚠️ dangerous) |
+| Mode | Behaviour |
+|------|-----------|
+| `always` (default) | Every `always`/`command` tool needs approval |
+| `whitelist` | `execute_command` runs automatically if it matches a whitelist regex **and** is a single simple command (no `;`, `|`, `&`, redirection, `$(...)`, variables) — checked by the backend (`check_command_whitelisted`); everything else needs approval |
+| `yolo` | Nothing needs approval (dangerous) |
 
-### Whitelist Patterns
+Tools from connected external MCP servers always need approval unless the
+mode is YOLO.
 
-Patterns are regex strings. Examples:
-```typescript
-whitelistedCommands: [
-  '^ipconfig',        // Commands starting with "ipconfig"
-  '^ping ',           // Commands starting with "ping "
-  '^systeminfo$',     // Exact match "systeminfo"
-]
-```
+Approval cards show exactly what will happen: the full command, the content of
+files to be written or generated, the edit diff, and the services (with
+options) a service run will start.
 
----
+### File access policy
 
-## Database Schema
+The agent's file tools (and the MCP server's) share one policy,
+`validate_agent_path` in `src-tauri/src/commands/agent/files.rs`:
 
-### memories table
+- paths must be under the data folder, the working directory or the user's
+  home directory;
+- `Windows\System32`, `SysWOW64`, `WinSxS` and `WindowsApps` are denied;
+- the app's own secrets — `settings.json` (API keys), its backups and the agent
+  database — are denied;
+- glob/grep patterns may not contain `..` or absolute paths.
 
-```sql
-CREATE TABLE memories (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL,
-  content TEXT NOT NULL,
-  embedding BLOB,
-  metadata TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  importance INTEGER DEFAULT 50,
-  access_count INTEGER DEFAULT 0,
-  last_accessed TEXT,
-  source_conversation_id TEXT,
-  scope TEXT DEFAULT 'global',    -- 'global' or 'machine'
-  machine_id TEXT                  -- Computer name for machine-scoped memories
-)
-```
+## Services
 
-### command_history table
+`run_service_queue` (approval required) starts a run with
+`agentInitiated: true`; `run_services` returns the report id as soon as the run
+starts. The session listens for `service-state-changed` / `service-completed`
+and feeds each completed service — and the final summary — back to the agent as
+an update message, delivered only when the agent is idle. The agent then uses
+the report tools (`get_service_report`, `set_service_analysis`,
+`set_report_summary`, `set_health_score`, `export_report`, …).
 
-```sql
-CREATE TABLE command_history (
-  id TEXT PRIMARY KEY,
-  command TEXT NOT NULL,
-  reason TEXT,
-  status TEXT NOT NULL,
-  output TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL
-)
-```
+## Conversations
 
-### conversations table
+Conversations are stored in `data/agent/memory.db` (SQLite) as the model
+history itself (`ModelMessage[]`), saved atomically after every turn. On load
+the history is normalized (older formats, tool calls left without results) and
+the chat UI is rebuilt from it.
 
-```sql
-CREATE TABLE conversations (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-)
-```
+## File attachments
 
-### conversation_messages table
+Uploaded and generated files live in `data/agent/files/`. Ids are UUIDs and are
+validated before use. **Open** copies the file to a temp folder under its
+original name and opens it; scripts and executables are only revealed in
+Explorer, never launched.
 
-```sql
-CREATE TABLE conversation_messages (
-  id TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  created_at TEXT NOT NULL
-)
-```
+## Chat rendering
 
----
+Markdown links open in the system browser. Remote images are not loaded (a
+prompt-injected model could otherwise leak data through an image URL); inline
+`data:` images still render. The production build also has a Content Security
+Policy (`tauri.conf.json`).
 
-## ⚠️ Critical: Tauri Parameter Naming
+## MCP server (remote control)
 
-**Tauri does NOT auto-convert between camelCase and snake_case.**
+Settings → AI Agent → MCP Server exposes the agent's tools to external LLM
+clients over JSON-RPC (`POST /mcp`). It:
 
-When calling Tauri commands from TypeScript, use **snake_case** parameter names:
+- listens on `127.0.0.1` only, unless **Allow network access** is enabled;
+- requires `Authorization: Bearer <key>` (keys shorter than 16 characters are
+  refused; the UI generates 32);
+- refuses browser requests (any `Origin` header) and, on loopback, requests
+  whose `Host` is not local (DNS-rebinding protection);
+- applies settings immediately — no restart needed.
 
-```typescript
-// ❌ WRONG
-await invoke('approve_command', { commandId: id });
+MCP clients run tools **without approval**, so only give the key to clients
+you trust.
 
-// ✅ CORRECT
-await invoke('approve_command', { command_id: id });
-```
-
----
-
-## Troubleshooting
-
-### Commands fail silently
-Check that frontend invoke calls use **snake_case** parameter names.
-
-### Memory not persisting
-1. Check that `data/agent/memory.db` exists
-2. Check file permissions on data folder
-
-### Search not working
-Configure search provider in Settings → AI Agent:
-- **Tavily**: Set API key from [tavily.com](https://tavily.com)
-- **SearXNG**: Set instance URL of your SearXNG deployment
-
----
-
-## Security Considerations
-
-1. **Never use YOLO mode** on untrusted systems
-2. **Review commands** before approving - the AI can make mistakes
-3. **Whitelist carefully** - regex patterns can match more than expected
-4. **API keys** are stored in settings.json (consider encryption)
-5. **Commands run as the app user** - they have your permissions
-6. **Memory contains sensitive data** - protect the data folder
-7. **Machine-scoped memories provide client privacy** - System info from one client won't leak to another
-8. **The memory database travels with USB** - All memories (global and machine) are in the same file, but machine-scoped queries are filtered by computer name
-
----
-
-## MCP Server (Remote Control)
-
-The MCP (Model Context Protocol) server enables external AI systems to control this machine remotely via HTTP.
-
-### Overview
-
-External LLMs like Agent Zero, Claude Desktop, or custom AI systems can:
-- Execute commands on this machine
-- Read/write files
-- Search the web
-- Get system information
-
-All operations respect the command approval mode setting.
-
-### Architecture
-
-```
-External LLM → HTTP Request → MCP Server (Rust) → Tool Execution → Response
-                    ↓
-            Bearer Token Auth
-```
-
-### Configuration
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `mcpServerEnabled` | `false` | Enable/disable server |
-| `mcpApiKey` | Auto-generated | Bearer token for authentication |
-| `mcpPort` | `8377` | HTTP server port |
-
-Settings location: `data/settings.json` under `agent` key.
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `src-tauri/src/mcp/mod.rs` | Module exports |
-| `src-tauri/src/mcp/server.rs` | HTTP server with bearer auth, CORS |
-| `src-tauri/src/mcp/tools.rs` | 8 MCP tool implementations |
-
-### Available MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `execute_command` | Run PowerShell commands (Windows) or shell commands (Linux/Mac) |
-| `read_file` | Read file contents |
-| `write_file` | Write content to a file |
-| `list_dir` | List directory contents with file sizes |
-| `move_file` | Move or rename files |
-| `copy_file` | Copy files |
-| `get_system_info` | Get OS and hostname information |
-| `search_web` | Search via Tavily or SearXNG |
-
-### HTTP Endpoints
-
-| Endpoint | Method | Auth Required | Description |
-|----------|--------|---------------|-------------|
-| `/` | GET | No | Health check, returns server status |
-| `/health` | GET | No | Health check, returns server status |
-| `/mcp` | POST | Yes | MCP JSON-RPC endpoint |
-
-### Usage
-
-#### Enable the Server
-
-1. Go to Settings → AI Agent → MCP Server
-2. Toggle "Enable MCP Server"
-3. Copy the auto-generated API key
-4. **Restart the application** (required for changes to take effect)
-
-#### Connect from External LLM
+Tools: `execute_command`, `read_file`, `write_file`, `edit_file`, `list_dir`,
+`move_file`, `copy_file`, `grep`, `glob`, `get_system_info`, `search_web`,
+`list_programs`, `find_exe`, `list_instruments`, `run_instrument`.
 
 ```bash
-# Health check (no auth required)
-curl http://localhost:8377/
-
-# MCP endpoint (auth required)
-curl -X POST \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' \
-  http://localhost:8377/mcp
+curl -X POST -H "Authorization: Bearer <KEY>" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' http://localhost:8377/mcp
 ```
 
-#### Remote Access
+## Adding a tool
 
-For access from other machines on the network:
-- Server binds to `0.0.0.0` (all interfaces)
-- Use `http://MACHINE_IP:8377/mcp`
-- For production: Put behind HTTPS reverse proxy (nginx, Caddy)
-
-### Security Considerations
-
-1. **API Key**: Auto-generated, unique per installation. Regenerate if compromised.
-2. **Network Exposure**: Server is accessible from LAN by default. Use firewall rules for internet exposure.
-3. **HTTPS**: For remote access over internet, always use a reverse proxy with TLS.
-4. **Approval Mode**: MCP commands execute immediately without UI approval. Set approval mode accordingly in settings.
-5. **Sensitive Operations**: `execute_command` can run any command with user privileges.
-
-### Troubleshooting
-
-#### Server not starting
-- Check that `mcpServerEnabled` is true in settings
-- Check that `mcpApiKey` is set
-- Check console output for port binding errors
-- Ensure port 8377 is not in use
-
-#### Unauthorized responses
-- Verify Authorization header format: `Bearer <API_KEY>`
-- Check API key matches settings exactly
-- No extra spaces or characters
-
-#### Connection refused
-- App must be running
-- Check firewall allows port 8377
-- Verify correct IP address for remote access
-
+1. If it needs the backend, add a `#[tauri::command]` + `#[specta::specta]`
+   function and register it in `specta_builder()` in `src-tauri/src/lib.rs`;
+   run the app (or `cargo test --test bindings`) to regenerate `src/bindings.ts`.
+2. Add a `defineTool({...})` entry to `AGENT_TOOLS`. Choose `approval: 'auto'`
+   only for read-only or report-editing tools.
+3. If it needs a new activity card type, add it to `src/types/agent-activity.ts`
+   and `AgentActivityItem.tsx`.
+4. To expose it to MCP clients too, add it to `src-tauri/src/mcp/tools.rs`
+   (calling the same backend function).

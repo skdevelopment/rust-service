@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Skull,
   RefreshCw,
@@ -58,6 +57,7 @@ import { formatCrashTime, formatDumpSize, getStopCodeCategory } from '@/types/bl
 import { useClipboard } from '@/lib/clipboard-utils';
 import { getCategoryBorderClass, getCategoryBadgeClass, getDaysSinceCrash } from '@/lib/bluescreen-utils';
 import { BSODDetailView } from '@/components/bluescreen/BSODDetailView';
+import { commands } from '@/bindings';
 
 /**
  * Bluescreen Analysis Page - Main component
@@ -90,8 +90,8 @@ export function BluescreenPage() {
     setError(null);
     try {
       const [history, statsResult] = await Promise.all([
-        invoke<BsodEntry[]>('get_bsod_history'),
-        invoke<BsodStats>('get_bsod_stats'),
+        commands.getBsodHistory(),
+        commands.getBsodStats(),
       ]);
       setEntries(history);
       setStats(statsResult);
@@ -168,7 +168,7 @@ export function BluescreenPage() {
   const loadDetails = async (dumpPath: string) => {
     setLoadingDetails(true);
     try {
-      const result = await invoke<BsodDetails>('get_bsod_details', { dumpPath });
+      const result = await commands.getBsodDetails(dumpPath);
       setDetails(result);
     } catch (err) {
       console.error('Failed to load details:', err);
@@ -191,7 +191,7 @@ export function BluescreenPage() {
     if (!deleteEntry) return;
     setDeleting(true);
     try {
-      await invoke('delete_crash_dump', { dumpPath: deleteEntry.dumpPath });
+      await commands.deleteCrashDump(deleteEntry.dumpPath);
       setEntries(prev => prev.filter(e => e.id !== deleteEntry.id));
     } catch (err) {
       console.error('Failed to delete dump:', err);

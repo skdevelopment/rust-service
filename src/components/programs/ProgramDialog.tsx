@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import {
   AppWindow,
@@ -28,6 +27,7 @@ import {
 } from '@/components/ui/dialog';
 
 import type { Program } from '@/types/programs';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Program Dialog Component
@@ -89,7 +89,7 @@ export function ProgramDialog({ open, onOpenChange, program, onSave }: ProgramDi
       if (iconPath) {
         try {
           // Use backend command for secure local file access
-          const url = await invoke<string | null>('get_program_icon', { iconPath });
+          const url = await commands.getProgramIcon(iconPath);
           setIconPreview(url);
         } catch {
           setIconPreview(null);
@@ -113,9 +113,7 @@ export function ProgramDialog({ open, onOpenChange, program, onSave }: ProgramDi
         // Auto-extract icon
         setIsExtracting(true);
         try {
-          const extractedPath = await invoke<string>('extract_program_icon', {
-            exePath: selected
-          });
+          const extractedPath = await commands.extractProgramIcon(selected);
           setIconPath(extractedPath);
         } catch (e) {
           console.warn('Could not extract icon:', e);

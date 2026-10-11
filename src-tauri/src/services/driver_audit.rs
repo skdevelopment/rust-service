@@ -3,16 +3,12 @@
 //! Runs Windows `driverquery /v /fo csv` to inventory all installed drivers.
 //! Flags stopped, degraded, or potentially problematic drivers.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -34,7 +30,7 @@ impl Service for DriverAuditService {
             options: vec![ServiceOptionSchema {
                 id: "show_all".to_string(),
                 label: "Show All Drivers".to_string(),
-                option_type: "boolean".to_string(),
+                option_type: OptionType::Boolean,
                 default_value: json!(false),
                 min: None,
                 max: None,
@@ -47,80 +43,41 @@ impl Service for DriverAuditService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "driver-audit";
-
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let show_all = options
             .get("show_all")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        emit_log("Running driver inventory...", &mut logs, app);
+        ctx.log("Running driver inventory...");
 
         // Run driverquery with verbose CSV output
-        let output = match Command::new("driverquery")
-            .args(["/v", "/fo", "csv"])
-            .output()
-        {
-            Ok(output) => output,
-            Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run driverquery: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
-                    severity: FindingSeverity::Error,
-                    title: "Driver Query Failed".to_string(),
-                    description: format!("Could not execute driverquery: {}", e),
-                    recommendation: Some("Try running as administrator.".to_string()),
-                    data: Some(json!({"type": "driver_audit", "error": true})),
-                });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("driverquery execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
-            }
-        };
+        let output =
+            match ctx.output(crate::proc::command("driverquery").args(["/v", "/fo", "csv"])) {
+                Ok(output) => output,
+                Err(e) => {
+                    ctx.log(format!("ERROR: Failed to run driverquery: {}", e));
+                    ctx.findings.push(ServiceFinding {
+                        severity: FindingSeverity::Error,
+                        title: "Driver Query Failed".to_string(),
+                        description: format!("Could not execute driverquery: {}", e),
+                        recommendation: Some("Try running as administrator.".to_string()),
+                        data: Some(json!({"type": "driver_audit", "error": true})),
+                    });
+                    return ctx.finish(false, Some(format!("driverquery execution failed: {}", e)));
+                }
+            };
 
         // driverquery outputs in the system's encoding — try UTF-8 first, then lossy
         let stdout = String::from_utf8(output.stdout.clone())
-            .unwrap_or_else(|_| String::from_utf8_lossy(&output.stdout).to_string());
+            .unwrap_or_else(|_| crate::proc::decode_output(&output.stdout).to_string());
 
         let exit_code = output.status.code().unwrap_or(-1);
-        emit_log(
-            &format!("driverquery exited with code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("driverquery exited with code: {}", exit_code));
 
         // Parse CSV output
         let drivers = parse_driverquery_csv(&stdout);
-        emit_log(
-            &format!("Found {} installed drivers", drivers.len()),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Found {} installed drivers", drivers.len()));
 
         // Categorize drivers
         let total = drivers.len();
@@ -131,16 +88,12 @@ impl Service for DriverAuditService {
             .filter(|d| d.status != "OK" || d.state == "Degraded" || d.state == "Unknown")
             .collect();
 
-        emit_log(
-            &format!(
-                "Running: {}, Stopped: {}, Problem: {}",
-                running.len(),
-                stopped.len(),
-                problem.len()
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Running: {}, Stopped: {}, Problem: {}",
+            running.len(),
+            stopped.len(),
+            problem.len()
+        ));
 
         // Determine overall severity
         let (severity, title) = if !problem.is_empty() {
@@ -171,7 +124,7 @@ impl Service for DriverAuditService {
                 .collect()
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description: format!(
@@ -199,7 +152,7 @@ impl Service for DriverAuditService {
 
         // Individual findings for problem drivers
         for driver in &problem {
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Warning,
                 title: format!("Driver Issue: {}", driver.display_name),
                 description: format!(
@@ -214,17 +167,9 @@ impl Service for DriverAuditService {
         }
 
         // Clean up temp file
-        emit_log("Driver audit complete.", &mut logs, app);
+        ctx.log("Driver audit complete.");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 

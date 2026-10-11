@@ -4,30 +4,16 @@
  * TypeScript interfaces for startup program management.
  */
 
+
+import type * as B from '@/bindings';
 /** Source location of a startup item */
-export type StartupSource = 
-  | 'registryCurrentUser'
-  | 'registryLocalMachine'
-  | 'startupFolderUser'
-  | 'startupFolderAllUsers'
-  | 'taskScheduler';
+export type StartupSource = B.StartupSource;
 
 /** Startup impact level */
-export type StartupImpact = 'high' | 'medium' | 'low' | 'unknown';
+export type StartupImpact = B.StartupImpact;
 
 /** Startup item information */
-export interface StartupItem {
-  id: string;
-  name: string;
-  command: string;
-  path: string | null;
-  source: StartupSource;
-  sourceLocation: string;
-  enabled: boolean;
-  publisher: string | null;
-  description: string | null;
-  impact: StartupImpact;
-}
+export type StartupItem = B.StartupItem;
 
 /** Get human-readable source name */
 export function getSourceDisplayName(source: StartupSource): string {

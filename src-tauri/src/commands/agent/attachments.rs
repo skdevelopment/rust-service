@@ -51,6 +51,81 @@ fn ensure_file_dirs() -> Result<(), String> {
     Ok(())
 }
 
+/// Attachment ids are UUIDs we generate; anything else (e.g. `..\\settings.json`)
+/// is rejected before it is joined onto a directory.
+fn validate_file_id(file_id: &str) -> Result<(), String> {
+    Uuid::parse_str(file_id)
+        .map(|_| ())
+        .map_err(|_| format!("Invalid file id: {}", file_id))
+}
+
+/// Resolve an attachment id to its stored file (uploaded or generated).
+fn find_stored_file(file_id: &str) -> Result<PathBuf, String> {
+    validate_file_id(file_id)?;
+    [get_uploaded_files_dir(), get_generated_files_dir()]
+        .into_iter()
+        .map(|dir| dir.join(file_id))
+        .find(|p| p.is_file())
+        .ok_or_else(|| format!("File not found: {}", file_id))
+}
+
+/// Extensions that run code when opened; these are only revealed, never opened.
+const EXECUTABLE_EXTENSIONS: &[&str] = &[
+    "exe", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msi",
+    "msp", "scr", "hta", "lnk", "pif", "reg", "cpl", "jar",
+];
+
+/// Open an attachment with its default application.
+///
+/// Stored files have no extension, so a copy with the original name is made in
+/// the temp folder first. Scripts and executables are revealed in Explorer
+/// instead of being launched.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn open_agent_file(app: tauri::AppHandle, file_id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let stored = find_stored_file(&file_id)?;
+    let info = load_file_metadata(&stored.to_string_lossy())?;
+    let name: String = Path::new(&info.original_name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| file_id.clone());
+    let extension = Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    let dir = std::env::temp_dir()
+        .join("rustservice-files")
+        .join(&file_id);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to prepare file: {}", e))?;
+    let target = dir.join(&name);
+    fs::copy(&stored, &target).map_err(|e| format!("Failed to prepare file: {}", e))?;
+
+    if EXECUTABLE_EXTENSIONS.contains(&extension.as_str()) {
+        return app
+            .opener()
+            .reveal_item_in_dir(&target)
+            .map_err(|e| format!("Failed to reveal file: {}", e));
+    }
+    app.opener()
+        .open_path(target.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("Failed to open file: {}", e))
+}
+
+/// Show an attachment in Explorer
+#[tauri::command(async)]
+#[specta::specta]
+pub fn reveal_agent_file(app: tauri::AppHandle, file_id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let stored = find_stored_file(&file_id)?;
+    app.opener()
+        .reveal_item_in_dir(&stored)
+        .map_err(|e| format!("Failed to reveal file: {}", e))
+}
+
 /// Save metadata sidecar file
 fn save_file_metadata(attachment: &FileAttachment) -> Result<(), String> {
     let meta_path = Path::new(&attachment.stored_path).with_extension("meta.json");
@@ -96,7 +171,8 @@ fn extract_file_content(
 }
 
 /// Save an uploaded file from the frontend
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn save_uploaded_file(
     file_name: String,
     mime_type: String,
@@ -184,7 +260,8 @@ pub fn save_uploaded_file(
 }
 
 /// Generate a file from the agent
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn generate_agent_file(
     filename: String,
     content: String,
@@ -266,45 +343,28 @@ pub fn generate_agent_file(
 }
 
 /// Read file content as text
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn read_file_content(file_id: String) -> Result<String, String> {
-    // Try to find the file in uploaded or generated directories
-    let uploaded_path = get_uploaded_files_dir().join(&file_id);
-    let generated_path = get_generated_files_dir().join(&file_id);
-
-    let path = if uploaded_path.exists() {
-        uploaded_path
-    } else if generated_path.exists() {
-        generated_path
-    } else {
-        return Err(format!("File not found: {}", file_id));
-    };
-
+    let path = find_stored_file(&file_id)?;
     fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 
 /// Read file content as base64 (for binary files)
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn read_file_binary(file_id: String) -> Result<String, String> {
-    let uploaded_path = get_uploaded_files_dir().join(&file_id);
-    let generated_path = get_generated_files_dir().join(&file_id);
-
-    let path = if uploaded_path.exists() {
-        uploaded_path
-    } else if generated_path.exists() {
-        generated_path
-    } else {
-        return Err(format!("File not found: {}", file_id));
-    };
-
+    let path = find_stored_file(&file_id)?;
     let bytes = fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 /// Get file info by ID
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_file_info(file_id: String) -> Result<FileAttachment, String> {
+    validate_file_id(&file_id)?;
     // Try to load metadata from uploaded or generated directories
     let uploaded_meta = get_uploaded_files_dir().join(format!("{}.meta.json", file_id));
     let generated_meta = get_generated_files_dir().join(format!("{}.meta.json", file_id));
@@ -326,7 +386,8 @@ pub fn get_file_info(file_id: String) -> Result<FileAttachment, String> {
 }
 
 /// List all agent files
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn list_agent_files(
     source: Option<FileSource>,
     limit: Option<u32>,
@@ -384,8 +445,10 @@ pub fn list_agent_files(
 }
 
 /// Delete an agent file
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn delete_agent_file(file_id: String) -> Result<(), String> {
+    validate_file_id(&file_id)?;
     // Try to find and delete in both directories
     let uploaded_path = get_uploaded_files_dir().join(&file_id);
     let uploaded_meta = get_uploaded_files_dir().join(format!("{}.meta.json", file_id));
@@ -414,9 +477,19 @@ pub fn delete_agent_file(file_id: String) -> Result<(), String> {
 }
 
 /// Validate a filesystem path for security
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn validate_filesystem_path(path: String) -> Result<PathValidationResult, String> {
     let path_obj = Path::new(&path);
+
+    if let Err(e) = super::files::validate_agent_path(path_obj) {
+        return Ok(PathValidationResult {
+            valid: false,
+            sanitized_path: None,
+            error: Some(e),
+            within_sandbox: false,
+        });
+    }
 
     // Check if path exists
     if !path_obj.exists() {
@@ -456,7 +529,8 @@ pub fn validate_filesystem_path(path: String) -> Result<PathValidationResult, St
 }
 
 /// Read a file from the filesystem and optionally create an attachment
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn read_filesystem_file(
     path: String,
     auto_extract: bool,

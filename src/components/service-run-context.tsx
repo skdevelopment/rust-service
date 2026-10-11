@@ -7,7 +7,6 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 import type {
@@ -16,6 +15,7 @@ import type {
   ServiceReport,
   ServiceRunState,
 } from '@/types/service';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Context Shape
@@ -60,6 +60,11 @@ interface ServiceRunContextValue {
 
 const ServiceRunContext = createContext<ServiceRunContextValue | null>(null);
 
+/** UI phase for a finished (or stopped) run */
+function finishedPhase(status: ServiceReport['status']): ServiceRunPhase {
+  return status === 'failed' || status === 'cancelled' ? status : 'completed';
+}
+
 // =============================================================================
 // Provider
 // =============================================================================
@@ -96,9 +101,9 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
   const loadData = useCallback(async () => {
     try {
       const [presetsResult, defsResult, stateResult] = await Promise.allSettled([
-        invoke<ServicePreset[]>('get_service_presets'),
-        invoke<ServiceDefinition[]>('get_service_definitions'),
-        invoke<ServiceRunState>('get_service_run_state'),
+        commands.getServicePresets(),
+        commands.getServiceDefinitions(),
+        commands.getServiceRunState(),
       ]);
 
       const errors: string[] = [];
@@ -125,9 +130,7 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
         } else if (stateData.currentReport && stateData.currentReport.status !== 'running') {
           setReport(stateData.currentReport);
           setIsRunning(false);
-          setPhase(stateData.currentReport.status === 'completed' || stateData.currentReport.status === 'failed'
-            ? (stateData.currentReport.status as ServiceRunPhase)
-            : 'completed');
+          setPhase(finishedPhase(stateData.currentReport.status));
         }
       } else {
         errors.push('Failed to load service state');
@@ -150,7 +153,15 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
 
   // Listen for service events
   useEffect(() => {
+    // `listen` resolves asynchronously; if the effect is cleaned up first
+    // (StrictMode double-mount, fast unmount) unsubscribe as soon as it does,
+    // so listeners are never leaked or duplicated.
+    let disposed = false;
     const unsubscribers: (() => void)[] = [];
+    const track = (unsub: () => void) => {
+      if (disposed) unsub();
+      else unsubscribers.push(unsub);
+    };
 
     const setupListeners = async () => {
       // Log events
@@ -162,7 +173,7 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
           return [...prev, event.payload.log];
         });
       });
-      unsubscribers.push(unsubLog);
+      track(unsubLog);
 
       // Progress events
       const unsubProgress = await listen<{ currentIndex: number; totalCount: number }>(
@@ -176,21 +187,16 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
           });
         }
       );
-      unsubscribers.push(unsubProgress);
+      track(unsubProgress);
 
       // Completion event
       const unsubComplete = await listen<ServiceReport>('service-completed', (event) => {
         setReport(event.payload);
         setIsRunning(false);
         setIsPaused(false);
-        const status = event.payload.status;
-        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
-          setPhase(status as ServiceRunPhase);
-        } else {
-          setPhase('completed');
-        }
+        setPhase(finishedPhase(event.payload.status));
       });
-      unsubscribers.push(unsubComplete);
+      track(unsubComplete);
 
       // State change events
       const unsubState = await listen<ServiceRunState>('service-state-changed', (event) => {
@@ -211,11 +217,11 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
         } else if (state.currentReport) {
           const status = state.currentReport.status;
           if (status === 'completed' || status === 'failed' || status === 'cancelled') {
-            setPhase(status as ServiceRunPhase);
+            setPhase(status);
           }
         }
       });
-      unsubscribers.push(unsubState);
+      track(unsubState);
     };
 
     setupListeners().catch((err) => {
@@ -224,12 +230,13 @@ export function ServiceRunProvider({ children }: ServiceRunProviderProps) {
     });
 
     return () => {
+      disposed = true;
       unsubscribers.forEach((unsub) => unsub());
     };
   }, []);
 
   const reloadPresets = useCallback(() => {
-    invoke<ServicePreset[]>('get_service_presets').then(setPresets).catch(() => {});
+    commands.getServicePresets().then(setPresets).catch(() => {});
   }, []);
 
   const value: ServiceRunContextValue = {

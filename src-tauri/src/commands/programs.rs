@@ -209,14 +209,16 @@ fn extract_icon_from_exe(_exe_path: &str, _output_path: &PathBuf) -> Result<(), 
 // =============================================================================
 
 /// Get all programs
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_programs() -> Result<Vec<Program>, String> {
     let config = load_programs_config()?;
     Ok(config.programs)
 }
 
 /// Add a new program
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn add_program(
     name: String,
     description: String,
@@ -237,7 +239,8 @@ pub fn add_program(
 }
 
 /// Update an existing program
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn update_program(
     id: String,
     name: String,
@@ -269,7 +272,8 @@ pub fn update_program(
 }
 
 /// Delete a program
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn delete_program(id: String) -> Result<(), String> {
     let mut config = load_programs_config()?;
 
@@ -285,7 +289,8 @@ pub fn delete_program(id: String) -> Result<(), String> {
 }
 
 /// Launch a program
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn launch_program(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let mut config = load_programs_config()?;
 
@@ -313,7 +318,8 @@ pub fn launch_program(app: tauri::AppHandle, id: String) -> Result<(), String> {
 }
 
 /// Extract icon from an executable
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn extract_program_icon(exe_path: String) -> Result<String, String> {
     // Ensure icons directory exists
     let icons_dir = get_icons_dir();
@@ -334,7 +340,8 @@ pub fn extract_program_icon(exe_path: String) -> Result<String, String> {
 }
 
 /// Reveal a program in file explorer
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn reveal_program(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let config = load_programs_config()?;
 
@@ -352,7 +359,8 @@ pub fn reveal_program(app: tauri::AppHandle, id: String) -> Result<(), String> {
 }
 
 /// Get program icon as base64 data URL
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_program_icon(icon_path: String) -> Result<Option<String>, String> {
     if icon_path.is_empty() {
         return Ok(None);
@@ -389,7 +397,7 @@ pub fn get_program_icon(icon_path: String) -> Result<Option<String>, String> {
 // =============================================================================
 
 /// Legacy program format from autoservice
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, specta::Type)]
 struct LegacyProgram {
     #[allow(dead_code)]
     id: String,
@@ -402,7 +410,8 @@ struct LegacyProgram {
 }
 
 /// Import programs from legacy autoservice JSON format
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn import_legacy_programs(file_path: String, reset_launch_count: bool) -> Result<u32, String> {
     use base64::Engine;
 

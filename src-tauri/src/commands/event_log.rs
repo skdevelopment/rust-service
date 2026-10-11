@@ -3,14 +3,13 @@
 //! Commands for reading and filtering Windows Event Logs.
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /// Event log source/channel information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EventLogSource {
     pub name: String,
@@ -20,7 +19,7 @@ pub struct EventLogSource {
 }
 
 /// Event severity level
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum EventLevel {
     Critical,
@@ -45,7 +44,7 @@ impl From<u8> for EventLevel {
 }
 
 /// Single event log entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EventLogEntry {
     pub id: u64,
@@ -63,7 +62,7 @@ pub struct EventLogEntry {
 }
 
 /// Query filter for event logs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EventLogFilter {
     pub log_name: String,
@@ -76,7 +75,7 @@ pub struct EventLogFilter {
 }
 
 /// Event log statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EventLogStats {
     pub log_name: String,
@@ -95,9 +94,14 @@ pub struct EventLogStats {
 
 /// Get available event log sources
 #[tauri::command]
+#[specta::specta]
 pub async fn get_event_log_sources() -> Result<Vec<EventLogSource>, String> {
-    let output = Command::new("powershell")
-        .args([
+    crate::proc::blocking(get_event_log_sources_blocking).await
+}
+
+fn get_event_log_sources_blocking() -> Result<Vec<EventLogSource>, String> {
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
             "-NoProfile",
             "-Command",
             r#"
@@ -114,11 +118,12 @@ pub async fn get_event_log_sources() -> Result<Vec<EventLogSource>, String> {
                 }
             } | ConvertTo-Json -Depth 2
             "#,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() || stdout.trim() == "null" {
         // Return the most common log sources as fallback
@@ -168,7 +173,12 @@ pub async fn get_event_log_sources() -> Result<Vec<EventLogSource>, String> {
 
 /// Get event log entries with optional filtering
 #[tauri::command]
+#[specta::specta]
 pub async fn get_event_logs(filter: EventLogFilter) -> Result<Vec<EventLogEntry>, String> {
+    crate::proc::blocking(move || get_event_logs_blocking(filter)).await
+}
+
+fn get_event_logs_blocking(filter: EventLogFilter) -> Result<Vec<EventLogEntry>, String> {
     let limit = filter.limit.unwrap_or(100).min(500);
 
     // Build the filter hash for Get-WinEvent
@@ -251,20 +261,21 @@ pub async fn get_event_logs(filter: EventLogFilter) -> Result<Vec<EventLogEntry>
         filter_hash, limit
     );
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args(["-NoProfile", "-Command", &script]),
+        crate::proc::QUERY_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::proc::decode_output(&output.stderr);
         if stderr.contains("No events were found") {
             return Ok(Vec::new());
         }
         return Err(format!("Failed to query event logs: {}", stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() || stdout.trim() == "null" || stdout.trim() == "[]" {
         return Ok(Vec::new());
@@ -319,7 +330,12 @@ pub async fn get_event_logs(filter: EventLogFilter) -> Result<Vec<EventLogEntry>
 
 /// Get event log statistics
 #[tauri::command]
+#[specta::specta]
 pub async fn get_event_log_stats(log_name: String) -> Result<EventLogStats, String> {
+    crate::proc::blocking(move || get_event_log_stats_blocking(log_name)).await
+}
+
+fn get_event_log_stats_blocking(log_name: String) -> Result<EventLogStats, String> {
     let script = format!(
         r#"
         $now = Get-Date
@@ -362,12 +378,13 @@ pub async fn get_event_log_stats(log_name: String) -> Result<EventLogStats, Stri
         log_name, log_name, log_name, log_name, log_name, log_name, log_name, log_name
     );
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args(["-NoProfile", "-Command", &script]),
+        crate::proc::QUERY_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() {
         return Ok(EventLogStats {
@@ -399,7 +416,16 @@ pub async fn get_event_log_stats(log_name: String) -> Result<EventLogStats, Stri
 
 /// Search event logs by keyword in message
 #[tauri::command]
+#[specta::specta]
 pub async fn search_event_logs(
+    log_name: String,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<EventLogEntry>, String> {
+    crate::proc::blocking(move || search_event_logs_blocking(log_name, query, limit)).await
+}
+
+fn search_event_logs_blocking(
     log_name: String,
     query: String,
     limit: Option<u32>,
@@ -443,12 +469,13 @@ pub async fn search_event_logs(
         log_name, query, query, query, limit
     );
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args(["-NoProfile", "-Command", &script]),
+        crate::proc::QUERY_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() || stdout.trim() == "null" {
         return Ok(Vec::new());

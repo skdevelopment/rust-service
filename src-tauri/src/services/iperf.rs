@@ -4,18 +4,14 @@
 //! throughput stability over time. Supports TCP/UDP, configurable duration,
 //! and provides detailed statistics.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -37,7 +33,7 @@ impl Service for IperfService {
                 ServiceOptionSchema {
                     id: "server".to_string(),
                     label: "Server Address".to_string(),
-                    option_type: "string".to_string(),
+                    option_type: OptionType::String,
                     default_value: json!("iperf.he.net"),
                     min: None,
                     max: None,
@@ -47,7 +43,7 @@ impl Service for IperfService {
                 ServiceOptionSchema {
                     id: "duration".to_string(),
                     label: "Duration (seconds)".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(30),
                     min: Some(5.0),
                     max: Some(300.0),
@@ -57,7 +53,7 @@ impl Service for IperfService {
                 ServiceOptionSchema {
                     id: "reverse".to_string(),
                     label: "Download Test".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(true),
                     min: None,
                     max: None,
@@ -73,26 +69,9 @@ impl Service for IperfService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let mut success = true;
         let mut error: Option<String> = None;
-        let service_id = "iperf";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
 
         // Parse options
         let server = options
@@ -108,44 +87,27 @@ impl Service for IperfService {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        emit_log("Starting network stability test...", &mut logs, app);
-        emit_log(&format!("Server: {}", server), &mut logs, app);
-        emit_log(&format!("Duration: {} seconds", duration), &mut logs, app);
-        emit_log(
-            &format!("Direction: {}", if reverse { "Download" } else { "Upload" }),
-            &mut logs,
-            app,
-        );
+        ctx.log("Starting network stability test...");
+        ctx.log(format!("Server: {}", server));
+        ctx.log(format!("Duration: {} seconds", duration));
+        ctx.log(format!(
+            "Direction: {}",
+            if reverse { "Download" } else { "Upload" }
+        ));
 
         // Get executable path
         let exe_path = match get_program_exe_path("iperf3".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("iPerf3 executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("iPerf3 executable not found".to_string()));
             }
             Err(e) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Failed to get executable path: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Failed to get executable path: {}", e)));
             }
         };
 
-        emit_log(&format!("Using iperf3: {}", exe_path), &mut logs, app);
-        emit_log("Connecting to server...", &mut logs, app);
+        ctx.log(format!("Using iperf3: {}", exe_path));
+        ctx.log("Connecting to server...");
 
         // Build command
         let mut args = vec![
@@ -162,15 +124,15 @@ impl Service for IperfService {
             args.push("-R".to_string());
         }
 
-        let output = Command::new(&exe_path).args(&args).output();
+        let output = ctx.output(crate::proc::command(&exe_path).args(&args));
 
         match output {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = crate::proc::decode_output(&output.stdout);
+                let stderr = crate::proc::decode_output(&output.stderr);
 
                 if !stderr.is_empty() {
-                    emit_log(&format!("stderr: {}", stderr.trim()), &mut logs, app);
+                    ctx.log(format!("stderr: {}", stderr.trim()));
                 }
 
                 match serde_json::from_str::<IperfResult>(&stdout) {
@@ -179,7 +141,7 @@ impl Service for IperfService {
                         if let Some(err) = &result.error {
                             success = false;
                             error = Some(err.clone());
-                            emit_log(&format!("iPerf error: {}", err), &mut logs, app);
+                            ctx.log(format!("iPerf error: {}", err));
                         } else {
                             // Extract interval data for throughput over time
                             let throughput_mbps: Vec<f64> = result
@@ -192,32 +154,16 @@ impl Service for IperfService {
                             // Calculate statistics
                             let stats = calculate_stats(&throughput_mbps);
 
-                            emit_log(
-                                &format!(
-                                    "Test complete. {} samples collected.",
-                                    throughput_mbps.len()
-                                ),
-                                &mut logs,
-                                app,
-                            );
-                            emit_log(
-                                &format!(
-                                    "Mean: {:.2} Mbps, Median: {:.2} Mbps",
-                                    stats.mean, stats.median
-                                ),
-                                &mut logs,
-                                app,
-                            );
-                            emit_log(
-                                &format!("Range: {:.2} - {:.2} Mbps", stats.min, stats.max),
-                                &mut logs,
-                                app,
-                            );
-                            emit_log(
-                                &format!("Variability (CoV): {:.1}%", stats.cov * 100.0),
-                                &mut logs,
-                                app,
-                            );
+                            ctx.log(format!(
+                                "Test complete. {} samples collected.",
+                                throughput_mbps.len()
+                            ));
+                            ctx.log(format!(
+                                "Mean: {:.2} Mbps, Median: {:.2} Mbps",
+                                stats.mean, stats.median
+                            ));
+                            ctx.log(format!("Range: {:.2} - {:.2} Mbps", stats.min, stats.max));
+                            ctx.log(format!("Variability (CoV): {:.1}%", stats.cov * 100.0));
 
                             // Get aggregates from end section
                             let retransmits = result
@@ -229,11 +175,7 @@ impl Service for IperfService {
                             // Calculate stability score
                             let (score, verdict) = calculate_stability_score(&stats, retransmits);
 
-                            emit_log(
-                                &format!("Stability Score: {:.0}/100 ({})", score, verdict),
-                                &mut logs,
-                                app,
-                            );
+                            ctx.log(format!("Stability Score: {:.0}/100 ({})", score, verdict));
 
                             // Determine severity
                             let severity = match score as u32 {
@@ -244,7 +186,7 @@ impl Service for IperfService {
                                 _ => FindingSeverity::Error,
                             };
 
-                            findings.push(ServiceFinding {
+                            ctx.findings.push(ServiceFinding {
                                 severity,
                                 title: format!("Network Stability: {}", verdict),
                                 description: format!(
@@ -283,16 +225,12 @@ impl Service for IperfService {
                     Err(e) => {
                         success = false;
                         error = Some(format!("Failed to parse iperf output: {}", e));
-                        emit_log(&format!("Error parsing output: {}", e), &mut logs, app);
+                        ctx.log(format!("Error parsing output: {}", e));
                         // Log partial output for debugging
                         if stdout.len() > 500 {
-                            emit_log(
-                                &format!("Output (truncated): {}...", &stdout[..500]),
-                                &mut logs,
-                                app,
-                            );
+                            ctx.log(format!("Output (truncated): {}...", &stdout[..500]));
                         } else {
-                            emit_log(&format!("Output: {}", stdout), &mut logs, app);
+                            ctx.log(format!("Output: {}", stdout));
                         }
                     }
                 }
@@ -300,19 +238,11 @@ impl Service for IperfService {
             Err(e) => {
                 success = false;
                 error = Some(format!("Failed to execute iperf3: {}", e));
-                emit_log(&format!("Error: {}", e), &mut logs, app);
+                ctx.log(format!("Error: {}", e));
             }
         }
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, error)
     }
 }
 
@@ -320,29 +250,29 @@ impl Service for IperfService {
 // Data Structures
 // =============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct IperfResult {
     error: Option<String>,
     intervals: Vec<Interval>,
     end: Option<EndSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct Interval {
     sum: Option<IntervalSum>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct IntervalSum {
     bits_per_second: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct EndSection {
     sum_sent: Option<SumSent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct SumSent {
     retransmits: Option<u64>,
 }

@@ -6,20 +6,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import {
-  File,
-  FileText,
-  FileCode,
-  FileImage,
-  FileAudio,
-  FileVideo,
-  Download,
-  Eye,
-  X,
-  Check,
-  Loader2,
-  ExternalLink,
-} from 'lucide-react';
+import { File, FileText, FileCode, FileImage, FileAudio, FileVideo, Download, Eye, Check, Loader2, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import type { FileAttachment, FileCategory } from '@/types/file-attachment';
 import { formatFileSize } from '@/types/file-attachment';
-import { invoke } from '@tauri-apps/api/core';
+import { commands } from '@/bindings';
 
 interface FileAttachmentProps {
   attachment: FileAttachment;
@@ -109,9 +96,7 @@ export function FileAttachmentComponent({
         attachment.size < 1024 * 1024) { // Max 1MB for preview
       setIsLoading(true);
       try {
-        const content = await invoke<string>('read_file_content', {
-          file_id: attachment.id,
-        });
+        const content = await commands.readFileContent(attachment.id);
         setPreviewContent(content);
         setIsPreviewOpen(true);
       } catch (error) {
@@ -130,14 +115,8 @@ export function FileAttachmentComponent({
 
     setIsDownloading(true);
     try {
-      // Get file info to determine path
-      const info = await invoke<{ path: string }>('get_file_info', {
-        file_id: attachment.id,
-      });
-
-      // Open file with default application
-      const { openPath } = await import('@tauri-apps/plugin-opener');
-      await openPath(info.path);
+      // Opens a copy under the original name (scripts are only revealed)
+      await commands.openAgentFile(attachment.id);
 
       setDownloadSuccess(true);
       setTimeout(() => setDownloadSuccess(false), 2000);
@@ -150,12 +129,7 @@ export function FileAttachmentComponent({
 
   const handleReveal = useCallback(async () => {
     try {
-      const info = await invoke<{ path: string }>('get_file_info', {
-        file_id: attachment.id,
-      });
-
-      const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
-      await revealItemInDir(info.path);
+      await commands.revealAgentFile(attachment.id);
     } catch (error) {
       console.error('Failed to reveal file:', error);
     }

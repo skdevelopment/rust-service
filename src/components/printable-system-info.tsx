@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { SystemInfo, formatBytes } from '@/types';
 import type { BusinessSettings } from '@/types/settings';
+import { commands } from '@/bindings';
 
 interface PrintableSystemInfoProps {
   systemInfo: SystemInfo;
@@ -14,7 +14,7 @@ export function PrintableSystemInfo({ systemInfo, businessSettings }: PrintableS
   // Load business logo
   useEffect(() => {
     if (businessSettings?.logoPath) {
-      invoke<string | null>('get_business_logo', { logoPath: businessSettings.logoPath })
+      commands.getBusinessLogo(businessSettings.logoPath)
         .then(url => setLogoUrl(url))
         .catch(() => setLogoUrl(null));
     } else {

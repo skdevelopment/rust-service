@@ -3,16 +3,11 @@
 //! Uses smartctl from smartmontools to report SMART data for all drives.
 //! Provides health status, wear level, power-on hours, and other metrics.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -37,73 +32,36 @@ impl Service for SmartctlService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let mut success = true;
         let mut error: Option<String> = None;
-        let service_id = "smartctl";
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting drive health analysis...", &mut logs, app);
+        ctx.log("Starting drive health analysis...");
 
         // Get executable path
         let exe_path = match get_program_exe_path("smartctl".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("smartctl executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("smartctl executable not found".to_string()));
             }
             Err(e) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Failed to get executable path: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Failed to get executable path: {}", e)));
             }
         };
 
-        emit_log(&format!("Using smartctl: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Using smartctl: {}", exe_path));
 
         // Scan for devices
-        emit_log("Scanning for drives...", &mut logs, app);
-        let scan_output = Command::new(&exe_path).args(["--scan", "-j"]).output();
+        ctx.log("Scanning for drives...");
+        let scan_output = ctx.output(crate::proc::command(&exe_path).args(["--scan", "-j"]));
 
         let devices = match scan_output {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stdout = crate::proc::decode_output(&output.stdout);
                 match serde_json::from_str::<ScanResult>(&stdout) {
                     Ok(scan) => scan.devices.unwrap_or_default(),
                     Err(e) => {
-                        emit_log(
-                            &format!("Warning: Failed to parse scan output: {}", e),
-                            &mut logs,
-                            app,
-                        );
+                        ctx.log(format!("Warning: Failed to parse scan output: {}", e));
                         Vec::new()
                     }
                 }
@@ -111,20 +69,16 @@ impl Service for SmartctlService {
             Err(e) => {
                 success = false;
                 error = Some(format!("Failed to scan devices: {}", e));
-                emit_log(&format!("Error scanning devices: {}", e), &mut logs, app);
+                ctx.log(format!("Error scanning devices: {}", e));
                 Vec::new()
             }
         };
 
         if devices.is_empty() {
-            emit_log(
-                "No drives found or failed to enumerate drives",
-                &mut logs,
-                app,
-            );
+            ctx.log("No drives found or failed to enumerate drives");
         }
 
-        emit_log(&format!("Found {} drive(s)", devices.len()), &mut logs, app);
+        ctx.log(format!("Found {} drive(s)", devices.len()));
 
         let mut drives_data: Vec<DriveHealth> = Vec::new();
         let mut healthy_count = 0;
@@ -148,33 +102,24 @@ impl Service for SmartctlService {
                     .to_lowercase()
                     .contains("usb")
             {
-                emit_log(
-                    &format!("Skipping USB device: {}", device_name),
-                    &mut logs,
-                    app,
-                );
+                ctx.log(format!("Skipping USB device: {}", device_name));
                 continue;
             }
 
-            emit_log(&format!("Querying drive: {}", device_name), &mut logs, app);
+            ctx.log(format!("Querying drive: {}", device_name));
 
-            let info_output = Command::new(&exe_path)
-                .args(["-a", device_name, "-j"])
-                .output();
+            let info_output =
+                ctx.output(crate::proc::command(&exe_path).args(["-a", device_name, "-j"]));
 
             if let Ok(output) = info_output {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = crate::proc::decode_output(&output.stdout);
+                let stderr = crate::proc::decode_output(&output.stderr);
 
                 // Skip if stderr indicates USB bridge issues
                 if stderr.to_lowercase().contains("usb")
                     || stderr.to_lowercase().contains("please specify device type")
                 {
-                    emit_log(
-                        &format!("Skipping {} (USB bridge detected)", device_name),
-                        &mut logs,
-                        app,
-                    );
+                    ctx.log(format!("Skipping {} (USB bridge detected)", device_name));
                     continue;
                 }
 
@@ -191,36 +136,28 @@ impl Service for SmartctlService {
                         healthy_count += 1;
                     }
 
-                    emit_log(
-                        &format!(
-                            "  {} - {} ({})",
-                            health.model_name,
-                            if health.health_passed == Some(true) {
-                                "Healthy"
-                            } else if health.health_passed == Some(false) {
-                                "FAILED"
-                            } else {
-                                "Unknown"
-                            },
-                            health.serial_number.as_deref().unwrap_or("N/A")
-                        ),
-                        &mut logs,
-                        app,
-                    );
+                    ctx.log(format!(
+                        "  {} - {} ({})",
+                        health.model_name,
+                        if health.health_passed == Some(true) {
+                            "Healthy"
+                        } else if health.health_passed == Some(false) {
+                            "FAILED"
+                        } else {
+                            "Unknown"
+                        },
+                        health.serial_number.as_deref().unwrap_or("N/A")
+                    ));
 
                     drives_data.push(health);
                 }
             }
         }
 
-        emit_log(
-            &format!(
-                "Analysis complete: {} healthy, {} warning, {} failed",
-                healthy_count, warning_count, failed_count
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Analysis complete: {} healthy, {} warning, {} failed",
+            healthy_count, warning_count, failed_count
+        ));
 
         // Create findings
         let overall_severity = if failed_count > 0 {
@@ -243,7 +180,7 @@ impl Service for SmartctlService {
             "No Drives Analyzed".to_string()
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: overall_severity,
             title: overall_title,
             description: format!("Analyzed {} drive(s) using SMART data.", drives_data.len()),
@@ -266,15 +203,7 @@ impl Service for SmartctlService {
             })),
         });
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, error)
     }
 }
 
@@ -282,19 +211,19 @@ impl Service for SmartctlService {
 // Data Structures
 // =============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct ScanResult {
     devices: Option<Vec<ScannedDevice>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct ScannedDevice {
     name: String,
     r#type: Option<String>,
     protocol: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct DeviceInfo {
     device: Option<DeviceField>,
     model_name: Option<String>,
@@ -307,17 +236,17 @@ struct DeviceInfo {
     temperature: Option<Temperature>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct DeviceField {
     name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct SmartStatus {
     passed: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct NvmeHealthLog {
     percentage_used: Option<u8>,
     power_cycles: Option<u64>,
@@ -330,17 +259,17 @@ struct NvmeHealthLog {
     temperature_sensors: Option<Vec<i32>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct PowerOnTime {
     hours: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct Temperature {
     current: Option<i32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct DriveHealth {
     name: String,

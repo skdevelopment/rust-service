@@ -11,12 +11,37 @@ use crate::types::service::ServicePreset;
 /// Current settings schema version for migration support
 pub const SETTINGS_VERSION: &str = "0.7.0";
 
+/// Theme mode preference
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+/// Logging verbosity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+}
+
+/// Color scheme used when none (or an empty one) is stored
+pub const DEFAULT_COLOR_SCHEME: &str = "forge";
+
 /// Appearance-related settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceSettings {
-    /// User's theme mode preference: "light", "dark", or "system"
-    pub theme: String,
+    /// User's theme mode preference
+    #[serde(default)]
+    pub theme: ThemeMode,
     /// Color scheme: "default", "techbay", etc. (CSS class applied to html)
     #[serde(default = "default_color_scheme")]
     pub color_scheme: String,
@@ -26,7 +51,7 @@ pub struct AppearanceSettings {
 }
 
 fn default_color_scheme() -> String {
-    String::from("forge")
+    String::from(DEFAULT_COLOR_SCHEME)
 }
 
 fn default_animations_enabled() -> bool {
@@ -36,31 +61,32 @@ fn default_animations_enabled() -> bool {
 impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
-            theme: String::from("system"),
-            color_scheme: String::from("default"),
+            theme: ThemeMode::System,
+            color_scheme: default_color_scheme(),
             enable_animations: true,
         }
     }
 }
 
 /// Data and storage related settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DataSettings {
-    /// Logging verbosity: "error", "warn", "info", "debug"
-    pub log_level: String,
+    /// Logging verbosity
+    #[serde(default)]
+    pub log_level: LogLevel,
 }
 
 impl Default for DataSettings {
     fn default() -> Self {
         Self {
-            log_level: String::from("info"),
+            log_level: LogLevel::Info,
         }
     }
 }
 
 /// Report-related settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportsSettings {
     /// Whether to automatically save reports when services complete
@@ -93,7 +119,7 @@ impl Default for ReportsSettings {
 }
 
 /// Business branding and technician settings
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BusinessSettings {
     /// Whether business mode is enabled
@@ -129,7 +155,7 @@ pub struct BusinessSettings {
 }
 
 /// Required program path overrides
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgramsSettings {
     /// Custom path overrides for required programs (keyed by program ID)
@@ -138,7 +164,7 @@ pub struct ProgramsSettings {
 }
 
 /// A single technician tab configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TechnicianTab {
     /// Unique identifier for the tab
@@ -153,7 +179,7 @@ pub struct TechnicianTab {
 }
 
 /// Technician tabs settings
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TechnicianTabsSettings {
     /// List of custom technician tabs
@@ -169,7 +195,7 @@ fn default_use_favicons() -> bool {
 }
 
 /// Service presets settings (custom presets)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetsSettings {
     /// Custom service presets created or modified by the user
@@ -178,7 +204,7 @@ pub struct PresetsSettings {
 }
 
 /// Main application settings schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     /// Settings schema version for migration
@@ -233,7 +259,7 @@ pub fn migrate_settings(mut settings: AppSettings) -> AppSettings {
 
     // Ensure color_scheme has a valid default if empty
     if settings.appearance.color_scheme.is_empty() {
-        settings.appearance.color_scheme = String::from("default");
+        settings.appearance.color_scheme = default_color_scheme();
     }
 
     settings

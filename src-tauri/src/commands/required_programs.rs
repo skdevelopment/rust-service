@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use super::data_dir::get_data_dir_path;
-use super::settings::{get_settings, save_settings};
+use super::settings::get_settings;
 use crate::types::{RequiredProgramDef, RequiredProgramStatus};
 
 // =============================================================================
@@ -168,13 +168,15 @@ fn find_exe_recursive(dir: &PathBuf, exe_names: &[String]) -> Option<PathBuf> {
 // =============================================================================
 
 /// Get all required program definitions
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_required_programs() -> Vec<RequiredProgramDef> {
     REQUIRED_PROGRAMS.values().cloned().collect()
 }
 
 /// Get required program definitions for specific IDs only
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_required_programs_by_ids(ids: Vec<String>) -> Vec<RequiredProgramDef> {
     ids.iter()
         .filter_map(|id| REQUIRED_PROGRAMS.get(id).cloned())
@@ -183,6 +185,7 @@ pub fn get_required_programs_by_ids(ids: Vec<String>) -> Vec<RequiredProgramDef>
 
 /// Get the status of all required programs (found/not found, paths)
 #[tauri::command]
+#[specta::specta]
 pub async fn get_required_programs_status() -> Result<Vec<RequiredProgramStatus>, String> {
     tokio::task::spawn_blocking(get_required_programs_status_blocking)
         .await
@@ -234,25 +237,26 @@ fn get_required_programs_status_blocking() -> Result<Vec<RequiredProgramStatus>,
 }
 
 /// Set a custom path override for a required program
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn set_program_path_override(program_id: String, path: Option<String>) -> Result<(), String> {
-    let mut settings = get_settings()?;
-
-    match path {
-        Some(p) if !p.trim().is_empty() => {
-            settings.programs.overrides.insert(program_id, p);
+    super::settings::update_settings(|settings| {
+        match path {
+            Some(p) if !p.trim().is_empty() => {
+                settings.programs.overrides.insert(program_id, p);
+            }
+            _ => {
+                settings.programs.overrides.remove(&program_id);
+            }
         }
-        _ => {
-            settings.programs.overrides.remove(&program_id);
-        }
-    }
-
-    save_settings(settings)?;
-    Ok(())
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 /// Get the resolved executable path for a required program (for service execution)
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_program_exe_path(program_id: String) -> Result<Option<String>, String> {
     let settings = get_settings()?;
 
@@ -275,7 +279,8 @@ pub fn get_program_exe_path(program_id: String) -> Result<Option<String>, String
 }
 
 /// Validate that required programs are available for given service IDs
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn validate_required_programs(
     required_ids: Vec<String>,
 ) -> Result<HashMap<String, bool>, String> {

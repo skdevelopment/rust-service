@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // =============================================================================
 
 /// Supported AI providers
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum AgentProvider {
@@ -17,7 +17,7 @@ pub enum AgentProvider {
     OpenAI,
     Anthropic,
     #[serde(rename = "xai")]
-    XAI,
+    Xai,
     Google,
     Mistral,
     DeepSeek,
@@ -27,9 +27,8 @@ pub enum AgentProvider {
     Custom,
 }
 
-
 /// Per-provider API key storage
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderApiKeys {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,7 +56,7 @@ pub struct ProviderApiKeys {
 // =============================================================================
 
 /// Command approval mode
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum ApprovalMode {
@@ -67,9 +66,8 @@ pub enum ApprovalMode {
     Yolo,
 }
 
-
 /// Status of a pending command
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum CommandStatus {
@@ -81,9 +79,8 @@ pub enum CommandStatus {
     Failed,
 }
 
-
 /// A command awaiting user approval
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCommand {
     pub id: String,
@@ -102,7 +99,7 @@ pub struct PendingCommand {
 // =============================================================================
 
 /// Search provider options
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum SearchProvider {
@@ -112,9 +109,8 @@ pub enum SearchProvider {
     None,
 }
 
-
 /// Search result from web search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub title: String,
@@ -129,7 +125,7 @@ pub struct SearchResult {
 // =============================================================================
 
 /// A saved agent conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
     pub id: String,
@@ -139,7 +135,7 @@ pub struct Conversation {
 }
 
 /// A message within a conversation (serialized CoreMessage content)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationMessage {
     pub id: String,
@@ -152,7 +148,7 @@ pub struct ConversationMessage {
 }
 
 /// Conversation with its messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationWithMessages {
     #[serde(flatten)]
@@ -165,7 +161,7 @@ pub struct ConversationWithMessages {
 // =============================================================================
 
 /// Agent configuration settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSettings {
     /// AI provider to use
@@ -223,6 +219,10 @@ pub struct AgentSettings {
     #[serde(default = "default_mcp_port")]
     pub mcp_port: u16,
 
+    /// Listen on all network interfaces instead of only 127.0.0.1
+    #[serde(default)]
+    pub mcp_allow_remote: bool,
+
     // ==========================================================================
     // MCP Client Settings (connecting to external servers)
     // ==========================================================================
@@ -232,7 +232,7 @@ pub struct AgentSettings {
 }
 
 /// Transport type for MCP server connections
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum MCPTransportType {
     #[default]
@@ -241,7 +241,7 @@ pub enum MCPTransportType {
 }
 
 /// Configuration for an external MCP server the agent connects to
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MCPServerConfig {
     /// Unique identifier
@@ -300,6 +300,7 @@ impl Default for AgentSettings {
             mcp_server_enabled: false,
             mcp_api_key: None,
             mcp_port: default_mcp_port(),
+            mcp_allow_remote: false,
             // MCP Client Settings
             mcp_servers: Vec::new(),
         }
@@ -310,23 +311,8 @@ impl Default for AgentSettings {
 // Tool Execution Types
 // =============================================================================
 
-/// Tool execution response from backend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolExecutionResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub requires_approval: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pending_command_id: Option<String>,
-}
-
 /// Command execution result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandExecutionResult {
     pub exit_code: i32,
@@ -339,7 +325,7 @@ pub struct CommandExecutionResult {
 // =============================================================================
 
 /// Categories of files for specialized handling
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum FileCategory {
     Text,
@@ -351,41 +337,6 @@ pub enum FileCategory {
 }
 
 impl FileCategory {
-    /// Get category from MIME type
-    pub fn from_mime_type(mime_type: &str) -> Self {
-        if mime_type.starts_with("text/") {
-            return Self::Text;
-        }
-        if mime_type.starts_with("image/") {
-            return Self::Image;
-        }
-        if mime_type.starts_with("audio/") || mime_type.starts_with("video/") {
-            return Self::Media;
-        }
-
-        let code_types = [
-            "application/javascript",
-            "application/json",
-            "application/xml",
-            "application/x-python-code",
-            "application/x-sh",
-        ];
-        if code_types.contains(&mime_type) || mime_type.contains("script") {
-            return Self::Code;
-        }
-
-        let doc_types = [
-            "application/pdf",
-            "application/msword",
-            "application/vnd.openxmlformats",
-        ];
-        if doc_types.iter().any(|t| mime_type.contains(t)) {
-            return Self::Document;
-        }
-
-        Self::Binary
-    }
-
     /// Get category from file extension
     pub fn from_extension(filename: &str) -> Self {
         let ext = filename.split('.').next_back().unwrap_or("").to_lowercase();
@@ -432,7 +383,7 @@ impl FileCategory {
 }
 
 /// Source of a file attachment
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum FileSource {
     Upload,
@@ -441,7 +392,7 @@ pub enum FileSource {
 }
 
 /// Unified file attachment metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileAttachment {
     pub id: String,
@@ -469,7 +420,7 @@ pub struct FileAttachment {
 }
 
 /// Source-specific metadata for file attachments
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 #[derive(Default)]
 pub struct FileAttachmentMetadata {
@@ -481,9 +432,8 @@ pub struct FileAttachmentMetadata {
     pub filesystem_metadata: Option<FilesystemMetadata>,
 }
 
-
 /// Metadata for user-uploaded files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadMetadata {
     pub uploaded_by: String,
@@ -493,7 +443,7 @@ pub struct UploadMetadata {
 }
 
 /// Metadata for agent-generated files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationMetadata {
     pub generated_by: String,
@@ -503,7 +453,7 @@ pub struct GenerationMetadata {
 }
 
 /// Metadata for filesystem-referenced files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FilesystemMetadata {
     pub original_path: String,
@@ -511,51 +461,8 @@ pub struct FilesystemMetadata {
     pub auto_read: bool,
 }
 
-/// File upload request from frontend
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileUploadRequest {
-    pub file_name: String,
-    pub mime_type: String,
-    pub size: u64,
-    pub content_base64: String,
-}
-
-/// File chunk upload request for large files
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileChunkRequest {
-    pub upload_id: String,
-    pub chunk_index: u32,
-    pub total_chunks: u32,
-    pub content_base64: String,
-}
-
-/// Status of a chunked upload
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChunkUploadStatus {
-    pub upload_id: String,
-    pub chunks_received: Vec<u32>,
-    pub chunks_total: u32,
-    pub bytes_received: u64,
-    pub bytes_total: u64,
-    pub complete: bool,
-}
-
-/// File generation request from agent
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileGenerationRequest {
-    pub filename: String,
-    pub content: String,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
 /// Result of validating a filesystem path
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PathValidationResult {
     pub valid: bool,
@@ -566,22 +473,11 @@ pub struct PathValidationResult {
     pub within_sandbox: bool,
 }
 
-/// Request to read a file from the filesystem
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilesystemReadRequest {
-    pub path: String,
-    #[serde(default)]
-    pub auto_extract: bool,
-    #[serde(default)]
-    pub max_size: Option<u64>,
-}
-
 /// File size limits (in bytes)
 pub const FILE_SIZE_SMALL: u64 = 10 * 1024 * 1024; // 10 MB
-pub const FILE_SIZE_LARGE: u64 = 100 * 1024 * 1024; // 100 MB
-pub const FILE_SIZE_HUGE: u64 = 1024 * 1024 * 1024; // 1 GB
-pub const CHUNK_SIZE: usize = 1024 * 1024; // 1 MB
+                                                   // 100 MB
+                                                   // 1 GB
+                                                   // 1 MB
 pub const MAX_CONTENT_EXTRACTION_SIZE: usize = 100 * 1024; // 100 KB
 
 /// Helper to format file size for display

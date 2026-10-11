@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 /// Operating system information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OsInfo {
     pub name: Option<String>,
@@ -16,7 +16,7 @@ pub struct OsInfo {
 }
 
 /// CPU/Processor information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CpuInfo {
     pub brand: String,
@@ -29,7 +29,7 @@ pub struct CpuInfo {
 }
 
 /// Per-core CPU information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CpuCoreInfo {
     pub name: String,
@@ -38,7 +38,7 @@ pub struct CpuCoreInfo {
 }
 
 /// Memory (RAM/Swap) information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryInfo {
     pub total_memory: u64,
@@ -49,7 +49,7 @@ pub struct MemoryInfo {
 }
 
 /// Disk/Storage information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskInfo {
     pub name: String,
@@ -62,7 +62,7 @@ pub struct DiskInfo {
 }
 
 /// Motherboard information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MotherboardInfo {
     pub name: Option<String>,
@@ -72,7 +72,7 @@ pub struct MotherboardInfo {
 }
 
 /// GPU/Graphics card information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuInfo {
     pub vendor: String,
@@ -90,7 +90,7 @@ pub struct GpuInfo {
 }
 
 /// Battery information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BatteryInfo {
     /// State of charge (0.0 - 1.0)
@@ -126,7 +126,7 @@ pub struct BatteryInfo {
 }
 
 /// Temperature sensor/component information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ComponentInfo {
     /// Component label/name
@@ -142,7 +142,7 @@ pub struct ComponentInfo {
 }
 
 /// System load average information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadAvgInfo {
     /// Average load within one minute
@@ -154,7 +154,7 @@ pub struct LoadAvgInfo {
 }
 
 /// Network interface information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkInfo {
     /// Interface name (e.g., "eth0", "Wi-Fi")
@@ -180,7 +180,7 @@ pub struct NetworkInfo {
 }
 
 /// System user information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfo {
     /// Username
@@ -190,7 +190,7 @@ pub struct UserInfo {
 }
 
 /// Process summary information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -200,7 +200,7 @@ pub struct ProcessInfo {
 }
 
 /// BIOS information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BiosInfo {
     pub manufacturer: Option<String>,
@@ -210,7 +210,7 @@ pub struct BiosInfo {
 }
 
 /// System product information (chassis/system)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemProductInfo {
     pub vendor: Option<String>,
@@ -220,7 +220,7 @@ pub struct SystemProductInfo {
 }
 
 /// RAM slot/DIMM information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RamSlotInfo {
     pub bank_label: Option<String>,
@@ -235,7 +235,7 @@ pub struct RamSlotInfo {
 }
 
 /// Complete system information response
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     pub os: OsInfo,

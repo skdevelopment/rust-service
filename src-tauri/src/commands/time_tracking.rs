@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
@@ -55,12 +54,6 @@ const IDX_BIAS: usize = 8; // Intercept (unclamped)
 const IDX_CPU_TEMP: usize = 9; // Positive coef (thermal throttling = slower)
 const IDX_SWAP_USAGE: usize = 10; // Positive coef (swap thrashing = much slower)
 
-/// Number of samples to accumulate before saving to disk (debounce)
-const SAVE_DEBOUNCE_COUNT: usize = 10;
-
-/// Global counter for save debouncing (reduces disk I/O)
-static SAVE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
 // =============================================================================
 // Metrics File Management
 // =============================================================================
@@ -93,9 +86,12 @@ fn save_metrics(metrics: &ServiceTimeMetrics) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
-    let json = serde_json::to_string_pretty(metrics)
+    let json = serde_json::to_string(metrics)
         .map_err(|e| format!("Failed to serialize metrics: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write metrics: {}", e))
+    // Write to a temp file and rename so a crash never leaves a truncated file.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json).map_err(|e| format!("Failed to write metrics: {}", e))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("Failed to write metrics: {}", e))
 }
 
 fn get_cached_metrics() -> &'static Mutex<ServiceTimeMetrics> {
@@ -615,7 +611,8 @@ fn make_model_key(service_id: &str, options_hash: &Option<String>) -> String {
 // Tauri Commands
 // =============================================================================
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_service_time_metrics() -> ServiceTimeMetrics {
     let metrics = get_cached_metrics().lock().unwrap();
     metrics.clone()
@@ -624,9 +621,10 @@ pub fn get_service_time_metrics() -> ServiceTimeMetrics {
 /// Record a service execution time
 /// Only records SUCCESSFUL services (failed services filtered out by caller)
 ///
-/// OPTIMIZATION: Uses debounced saving to prevent disk thrashing.
-/// Writing JSON on every sample would freeze the UI in batch operations.
-#[tauri::command]
+/// Every sample is persisted immediately: samples arrive at most once per
+/// service run, so the write is cheap and nothing is lost if the app closes.
+#[tauri::command(async)]
+#[specta::specta]
 pub fn record_service_time(
     service_id: String,
     duration_ms: u64,
@@ -700,27 +698,26 @@ pub fn record_service_time(
         }
     }
 
-    // OPTIMIZATION: Debounced saving to prevent disk thrashing
-    // Only save to disk every N samples instead of on every single sample
-    let current_count = SAVE_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-    if current_count >= SAVE_DEBOUNCE_COUNT {
-        SAVE_COUNTER.store(0, Ordering::Relaxed);
-        save_metrics(&metrics)?;
-    }
-
-    Ok(())
+    save_metrics(&metrics)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_pc_fingerprint() -> PcFingerprint {
     generate_pc_fingerprint()
 }
 
+/// Arbitrary service options from the frontend (exported to TypeScript as `unknown`)
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(transparent)]
+pub struct ServiceOptions(#[specta(type = specta_typescript::Unknown)] pub serde_json::Value);
+
 /// Get estimated time for a service with specific options on the current PC
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_estimated_time(
     service_id: String,
-    options: Option<serde_json::Value>,
+    options: Option<ServiceOptions>,
     default_secs: u32,
 ) -> u64 {
     // Move fingerprint generation outside lock
@@ -728,7 +725,7 @@ pub fn get_estimated_time(
     let metrics = get_cached_metrics().lock().unwrap();
 
     // Compute hash if options provided
-    let options_hash = options.map(|o| compute_options_hash(&o));
+    let options_hash = options.map(|o| compute_options_hash(&o.0));
 
     // Create composite key for this service+options combination
     let model_key = make_model_key(&service_id, &options_hash);
@@ -769,7 +766,8 @@ pub fn get_estimated_time(
     (default_secs as u64) * 1000
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_service_averages() -> Vec<ServiceTimeStats> {
     // Move fingerprint generation outside lock
     let fingerprint = generate_pc_fingerprint();
@@ -819,7 +817,8 @@ pub fn get_service_averages() -> Vec<ServiceTimeStats> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_preset_averages() -> Vec<PresetTimeStats> {
     let metrics = get_cached_metrics().lock().unwrap();
 
@@ -858,7 +857,8 @@ pub fn get_preset_averages() -> Vec<PresetTimeStats> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn clear_service_metrics(service_id: Option<String>) -> Result<u32, String> {
     let mut metrics = get_cached_metrics().lock().unwrap();
 
@@ -890,7 +890,8 @@ pub fn clear_service_metrics(service_id: Option<String>) -> Result<u32, String> 
     Ok(removed as u32)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn retrain_time_models() -> Result<u32, String> {
     let mut metrics = get_cached_metrics().lock().unwrap();
 
@@ -918,27 +919,18 @@ pub fn retrain_time_models() -> Result<u32, String> {
     Ok(trained_count)
 }
 
-/// Compute a hash of service options for settings-aware tracking
+/// Compute a stable hash of service options for settings-aware tracking
+///
+/// SHA-256 of the canonical JSON (serde_json maps are key-sorted), so the key
+/// survives toolchain upgrades, unlike `DefaultHasher`.
 pub fn compute_options_hash(options: &serde_json::Value) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let options_str = options.to_string();
-    let mut hasher = DefaultHasher::new();
-    options_str.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+    crate::types::compute_checksum(options.to_string().as_bytes())[..16].to_string()
 }
 
-/// Force-save any pending metrics to disk
-///
-/// Should be called on app close to ensure no data is lost due to debouncing.
-/// The debounced saving mechanism may have unsaved data in memory.
-#[tauri::command]
+/// Force-save metrics to disk (kept for callers; samples are saved as they arrive)
+#[tauri::command(async)]
+#[specta::specta]
 pub fn flush_service_metrics() -> Result<(), String> {
-    // Reset the save counter
-    SAVE_COUNTER.store(0, Ordering::Relaxed);
-
-    // Force save current metrics
     let metrics = get_cached_metrics().lock().unwrap();
     save_metrics(&metrics)
 }

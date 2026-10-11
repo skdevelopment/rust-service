@@ -1,568 +1,371 @@
-//! MCP HTTP Server
+//! MCP HTTP server
 //!
-//! Implements full MCP JSON-RPC protocol over HTTP transport.
-//! Handles tools/list and tools/call methods for external LLM control.
+//! A minimal MCP JSON-RPC endpoint (`POST /mcp`) for remote LLM control.
+//!
+//! Security model: the server can run commands on the machine with the app's
+//! privileges, so
+//! - it listens on 127.0.0.1 unless remote access is explicitly enabled,
+//! - every request needs `Authorization: Bearer <key>` (compared in constant time),
+//! - browser requests (any `Origin` header) are refused, and on loopback the
+//!   `Host` header must be local, which blocks DNS-rebinding attacks,
+//! - request bodies are size-limited.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
-use super::handlers;
-use super::tools::RustServiceTools;
+use super::tools;
+use crate::types::AgentSettings;
 
 type BoxBody = Full<Bytes>;
 
-// =============================================================================
-// JSON-RPC Types
-// =============================================================================
+/// Shortest API key the server accepts (the UI generates 32 hex characters).
+pub const MIN_API_KEY_LEN: usize = 16;
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    method: String,
-    #[serde(default)]
-    params: serde_json::Value,
-    id: serde_json::Value,
-}
+/// Largest accepted request body.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-    id: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<serde_json::Value>,
-}
-
-impl JsonRpcResponse {
-    fn success(result: serde_json::Value, id: serde_json::Value) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            result: Some(result),
-            error: None,
-            id,
-        }
-    }
-
-    fn error(code: i32, message: &str, id: serde_json::Value) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.to_string(),
-                data: None,
-            }),
-            id,
-        }
-    }
-}
+const PROTOCOL_VERSION: &str = "2024-11-05";
 
 // =============================================================================
-// Tool Definitions for tools/list
+// Lifecycle
 // =============================================================================
 
-fn get_tool_definitions() -> serde_json::Value {
-    serde_json::json!({
-        "tools": [
-            {
-                "name": "execute_command",
-                "description": "Execute a PowerShell command on the system. Returns stdout, stderr, and exit code.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "The PowerShell command to execute"
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Brief explanation of why this command is needed"
-                        }
-                    },
-                    "required": ["command", "reason"]
-                }
-            },
-            {
-                "name": "read_file",
-                "description": "Read the contents of a file. Use this to examine configuration files, logs, or other text files.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Full path to the file"
-                        }
-                    },
-                    "required": ["path"]
-                }
-            },
-            {
-                "name": "write_file",
-                "description": "Write content to a file. Creates the file if it doesn't exist.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Full path to the file"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Content to write"
-                        }
-                    },
-                    "required": ["path", "content"]
-                }
-            },
-            {
-                "name": "list_dir",
-                "description": "List files and directories in a specific path. Use this to explore the file system.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path to list content for"
-                        }
-                    },
-                    "required": ["path"]
-                }
-            },
-            {
-                "name": "move_file",
-                "description": "Move or rename a file from source to destination.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "src": {
-                            "type": "string",
-                            "description": "Source file path"
-                        },
-                        "dest": {
-                            "type": "string",
-                            "description": "Destination file path"
-                        }
-                    },
-                    "required": ["src", "dest"]
-                }
-            },
-            {
-                "name": "copy_file",
-                "description": "Copy a file from source to destination.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "src": {
-                            "type": "string",
-                            "description": "Source file path"
-                        },
-                        "dest": {
-                            "type": "string",
-                            "description": "Destination file path"
-                        }
-                    },
-                    "required": ["src", "dest"]
-                }
-            },
-            {
-                "name": "get_system_info",
-                "description": "Get detailed system information including OS version, CPU, memory, disks, and hostname.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
-            },
-            {
-                "name": "search_web",
-                "description": "Search the web for information. Returns search results with titles, URLs, and snippets.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            },
-            {
-                "name": "list_programs",
-                "description": "List all portable programs available in the data/programs folder.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
-            },
-            {
-                "name": "list_instruments",
-                "description": "List available custom instruments (scripts) that can be run.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
-            },
-            {
-                "name": "run_instrument",
-                "description": "Run a custom instrument (script) by name.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "Name of the instrument to run"
-                        },
-                        "args": {
-                            "type": "string",
-                            "description": "Optional arguments to pass to the instrument"
-                        }
-                    },
-                    "required": ["name"]
-                }
-            }
-        ]
-    })
-}
-
-// =============================================================================
-// Tool Dispatch
-// =============================================================================
-
-async fn dispatch_tool_call(
-    tools: &RustServiceTools,
-    name: &str,
-    arguments: &serde_json::Map<String, serde_json::Value>,
-) -> Result<serde_json::Value, String> {
-    match name {
-        "execute_command" => handlers::handle_execute_command(tools, arguments).await,
-        "read_file" => handlers::handle_read_file(tools, arguments).await,
-        "write_file" => handlers::handle_write_file(tools, arguments).await,
-        "list_dir" => handlers::handle_list_dir(tools, arguments).await,
-        "move_file" => handlers::handle_move_file(tools, arguments).await,
-        "copy_file" => handlers::handle_copy_file(tools, arguments).await,
-        "get_system_info" => handlers::handle_get_system_info(tools).await,
-        "search_web" => handlers::handle_search_web(tools, arguments).await,
-        "list_programs" => handlers::handle_list_programs(tools).await,
-        "list_instruments" => handlers::handle_list_instruments(tools).await,
-        "run_instrument" => handlers::handle_run_instrument(tools, arguments).await,
-        _ => Err(format!("Unknown tool: {}", name)),
-    }
-}
-
-/// Convert rmcp CallToolResult to JSON
-pub(crate) fn call_tool_result_to_json(result: rmcp::model::CallToolResult) -> serde_json::Value {
-    let content: Vec<serde_json::Value> = result
-        .content
-        .iter()
-        .map(|c| {
-            // rmcp Content is Annotated<RawContent>, extract the raw content
-            // The raw field contains the actual content
-            serde_json::json!({
-                "type": "text",
-                "text": format!("{:?}", c.raw)
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "content": content,
-        "isError": result.is_error.unwrap_or(false)
-    })
-}
-
-// =============================================================================
-// HTTP Request Handler
-// =============================================================================
-
-async fn handle_mcp_request(
-    req: Request<Incoming>,
-    api_key: Arc<String>,
-    tools: Arc<RustServiceTools>,
-) -> Result<Response<BoxBody>, hyper::Error> {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
-
-    // Health check endpoint (no auth required)
-    if path == "/" || path == "/health" {
-        let response = serde_json::json!({
-            "status": "ok",
-            "service": "RustService MCP Server",
-            "version": "1.0.0",
-            "tools_available": 11
-        });
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(response.to_string())))
-            .unwrap());
-    }
-
-    // Handle CORS preflight
-    if method == Method::OPTIONS {
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Access-Control-Allow-Origin", "*")
-            .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            .header(
-                "Access-Control-Allow-Headers",
-                "Authorization, Content-Type",
-            )
-            .body(BoxBody::new(Bytes::new()))
-            .unwrap());
-    }
-
-    // Check authorization for /mcp endpoint
-    let auth_header = req.headers().get("authorization");
-    let expected = format!("Bearer {}", api_key);
-
-    if auth_header.map(|h| h.to_str().ok()) != Some(Some(expected.as_str())) {
-        eprintln!("MCP: Unauthorized request to {}", path);
-        return Ok(Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Unauthorized - Bearer token required"}"#,
-            )))
-            .unwrap());
-    }
-
-    // Only accept POST to /mcp
-    if path != "/mcp" {
-        return Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Not Found - use POST /mcp"}"#,
-            )))
-            .unwrap());
-    }
-
-    if method != Method::POST {
-        return Ok(Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(BoxBody::new(Bytes::from(
-                r#"{"error":"Method not allowed - use POST"}"#,
-            )))
-            .unwrap());
-    }
-
-    // Collect request body
-    let body_bytes = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            eprintln!("MCP: Failed to read request body: {}", e);
-            let response = JsonRpcResponse::error(
-                -32700,
-                "Failed to read request body",
-                serde_json::Value::Null,
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(BoxBody::new(Bytes::from(
-                    serde_json::to_string(&response).unwrap(),
-                )))
-                .unwrap());
-        }
-    };
-
-    // Parse JSON-RPC request
-    let rpc_request: JsonRpcRequest = match serde_json::from_slice(&body_bytes) {
-        Ok(req) => req,
-        Err(e) => {
-            eprintln!("MCP: Failed to parse JSON-RPC: {}", e);
-            let response = JsonRpcResponse::error(
-                -32700,
-                "Parse error - invalid JSON",
-                serde_json::Value::Null,
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(BoxBody::new(Bytes::from(
-                    serde_json::to_string(&response).unwrap(),
-                )))
-                .unwrap());
-        }
-    };
-
-    eprintln!(
-        "MCP: Received method '{}' id={}",
-        rpc_request.method, rpc_request.id
-    );
-
-    // Handle MCP methods
-    let response = match rpc_request.method.as_str() {
-        "initialize" => {
-            // MCP initialization - return server capabilities
-            JsonRpcResponse::success(
-                serde_json::json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {
-                            "listChanged": true
-                        }
-                    },
-                    "serverInfo": {
-                        "name": "RustService MCP",
-                        "version": "1.0.0"
-                    }
-                }),
-                rpc_request.id,
-            )
-        }
-        "tools/list" => {
-            // Return list of available tools
-            JsonRpcResponse::success(get_tool_definitions(), rpc_request.id)
-        }
-        "tools/call" => {
-            // Extract tool name and arguments
-            let tool_name = rpc_request
-                .params
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let empty_map = serde_json::Map::new();
-            let arguments = rpc_request
-                .params
-                .get("arguments")
-                .and_then(|v| v.as_object())
-                .unwrap_or(&empty_map);
-
-            eprintln!("MCP: Calling tool '{}' with args: {:?}", tool_name, arguments);
-
-            match dispatch_tool_call(&tools, tool_name, arguments).await {
-                Ok(result) => JsonRpcResponse::success(result, rpc_request.id),
-                Err(e) => JsonRpcResponse::error(-32603, &e, rpc_request.id),
-            }
-        }
-        "notifications/initialized" => {
-            // Client notification that initialization is complete - no response needed
-            // But we return success anyway for non-notification requests
-            JsonRpcResponse::success(serde_json::json!({}), rpc_request.id)
-        }
-        _ => {
-            eprintln!("MCP: Method not found: {}", rpc_request.method);
-            JsonRpcResponse::error(
-                -32601,
-                &format!("Method not found: {}", rpc_request.method),
-                rpc_request.id,
-            )
-        }
-    };
-
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "application/json")
-        .header("Access-Control-Allow-Origin", "*")
-        .body(BoxBody::new(Bytes::from(
-            serde_json::to_string(&response).unwrap(),
-        )))
-        .unwrap())
-}
-
-// =============================================================================
-// Server Lifecycle
-// =============================================================================
-
-/// Run the MCP server with HTTP transport
-pub async fn run_mcp_server_http(
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct ServerConfig {
     port: u16,
     api_key: String,
-    tavily_key: Option<String>,
-    searxng_url: Option<String>,
-) {
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    allow_remote: bool,
+}
 
-    eprintln!("Starting MCP HTTP server on http://0.0.0.0:{}/mcp", port);
+struct RunningServer {
+    config: ServerConfig,
+    task: tauri::async_runtime::JoinHandle<()>,
+}
 
-    let tools = Arc::new(RustServiceTools::with_settings(tavily_key, searxng_url));
-    let api_key = Arc::new(api_key);
+static RUNNING: Mutex<Option<RunningServer>> = Mutex::new(None);
+
+/// Start, restart or stop the server so it matches the agent settings.
+///
+/// Called at startup and whenever agent settings change, so enabling the
+/// server or rotating its key takes effect without restarting the app.
+pub fn apply_settings(agent: &AgentSettings) {
+    let desired = desired_config(agent);
+    let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+
+    if running.as_ref().map(|r| &r.config) == desired.as_ref() {
+        return;
+    }
+
+    if let Some(old) = running.take() {
+        old.task.abort();
+        log::info!("[MCP] Server on port {} stopped", old.config.port);
+    }
+
+    if let Some(config) = desired {
+        let task_config = config.clone();
+        let task = tauri::async_runtime::spawn(async move { serve(task_config).await });
+        *running = Some(RunningServer { config, task });
+    }
+}
+
+fn desired_config(agent: &AgentSettings) -> Option<ServerConfig> {
+    if !agent.mcp_server_enabled {
+        return None;
+    }
+    match agent.mcp_api_key.as_deref().map(str::trim) {
+        Some(key) if key.len() >= MIN_API_KEY_LEN => Some(ServerConfig {
+            port: agent.mcp_port,
+            api_key: key.to_string(),
+            allow_remote: agent.mcp_allow_remote,
+        }),
+        Some(_) => {
+            log::error!(
+                "[MCP] Server enabled but the API key is shorter than {} characters; not starting",
+                MIN_API_KEY_LEN
+            );
+            None
+        }
+        None => {
+            log::error!("[MCP] Server enabled but no API key is configured; not starting");
+            None
+        }
+    }
+}
+
+async fn serve(config: ServerConfig) {
+    let ip = if config.allow_remote {
+        [0, 0, 0, 0]
+    } else {
+        [127, 0, 0, 1]
+    };
+    let addr = SocketAddr::from((ip, config.port));
 
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Failed to bind MCP server to {}: {}", addr, e);
+            log::error!("[MCP] Failed to bind {}: {}", addr, e);
             return;
         }
     };
+    log::info!("[MCP] Listening on http://{}/mcp", addr);
+    if config.allow_remote {
+        log::warn!("[MCP] Remote access is enabled; any host that can reach this port and knows the key can control this machine");
+    }
 
-    eprintln!("MCP HTTP server listening on http://{}/mcp", addr);
-    eprintln!("Available tools: execute_command, read_file, write_file, list_dir, move_file, copy_file, get_system_info, search_web, list_programs, list_instruments, run_instrument");
-
+    let config = Arc::new(config);
     loop {
-        let (stream, remote_addr) = match listener.accept().await {
+        let (stream, remote) = match listener.accept().await {
             Ok(conn) => conn,
             Err(e) => {
-                eprintln!("Failed to accept connection: {}", e);
+                log::warn!("[MCP] Failed to accept connection: {}", e);
                 continue;
             }
         };
 
-        let io = TokioIo::new(stream);
-        let api_key = api_key.clone();
-        let tools = tools.clone();
-
-        tokio::spawn(async move {
+        let config = config.clone();
+        tauri::async_runtime::spawn(async move {
             let service = service_fn(move |req| {
-                let api_key = api_key.clone();
-                let tools = tools.clone();
-                async move { handle_mcp_request(req, api_key, tools).await }
+                let config = config.clone();
+                async move { Ok::<_, hyper::Error>(handle(req, &config).await) }
             });
-
-            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-                // Connection errors are usually just clients disconnecting
-                eprintln!("Connection from {} ended: {}", remote_addr, e);
+            if let Err(e) = http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+            {
+                log::debug!("[MCP] Connection from {} ended: {}", remote, e);
             }
         });
     }
 }
 
-/// Start the MCP server in a background thread
-pub fn start_mcp_server_background(
-    port: u16,
-    api_key: String,
-    tavily_key: Option<String>,
-    searxng_url: Option<String>,
-) {
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                eprintln!("Failed to create tokio runtime for MCP server: {}", e);
-                return;
-            }
-        };
+// =============================================================================
+// HTTP handling
+// =============================================================================
 
-        rt.block_on(run_mcp_server_http(port, api_key, tavily_key, searxng_url));
-    });
+fn respond(status: StatusCode, body: Value) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, "application/json")
+        .body(BoxBody::new(Bytes::from(body.to_string())))
+        .expect("static response parts are valid")
+}
+
+fn empty(status: StatusCode) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .body(BoxBody::new(Bytes::new()))
+        .expect("static response parts are valid")
+}
+
+/// Compare secrets without leaking the matching prefix length through timing.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn is_authorized(req: &Request<Incoming>, api_key: &str) -> bool {
+    req.headers()
+        .get(AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .is_some_and(|token| constant_time_eq(token.trim().as_bytes(), api_key.as_bytes()))
+}
+
+/// On loopback, only accept requests addressed to a local host name.
+fn host_is_local(req: &Request<Incoming>) -> bool {
+    let Some(host) = req.headers().get(HOST).and_then(|h| h.to_str().ok()) else {
+        return false;
+    };
+    let name = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1"
+    )
+}
+
+async fn handle(req: Request<Incoming>, config: &ServerConfig) -> Response<BoxBody> {
+    // MCP clients are not browsers. Refusing any Origin stops web pages from
+    // driving the server (there are deliberately no CORS headers either).
+    if req.headers().contains_key(ORIGIN) {
+        return respond(
+            StatusCode::FORBIDDEN,
+            json!({ "error": "Browser requests are not allowed" }),
+        );
+    }
+    if !config.allow_remote && !host_is_local(&req) {
+        return respond(
+            StatusCode::FORBIDDEN,
+            json!({ "error": "Invalid Host header" }),
+        );
+    }
+
+    let path = req.uri().path().to_string();
+    if path == "/" || path == "/health" {
+        return respond(
+            StatusCode::OK,
+            json!({ "status": "ok", "service": "RustService MCP Server", "tools": tools::tool_count() }),
+        );
+    }
+
+    if !is_authorized(&req, &config.api_key) {
+        log::warn!("[MCP] Unauthorized request to {}", path);
+        return respond(
+            StatusCode::UNAUTHORIZED,
+            json!({ "error": "Unauthorized - Bearer token required" }),
+        );
+    }
+    if path != "/mcp" {
+        return respond(
+            StatusCode::NOT_FOUND,
+            json!({ "error": "Not found - use POST /mcp" }),
+        );
+    }
+    if req.method() != Method::POST {
+        return respond(
+            StatusCode::METHOD_NOT_ALLOWED,
+            json!({ "error": "Method not allowed - use POST" }),
+        );
+    }
+
+    let body = match Limited::new(req.into_body(), MAX_BODY_BYTES)
+        .collect()
+        .await
+    {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            log::warn!("[MCP] Failed to read request body: {}", e);
+            return respond(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                rpc_error(Value::Null, -32700, "Request body too large or unreadable"),
+            );
+        }
+    };
+
+    let request: RpcRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return respond(
+                StatusCode::BAD_REQUEST,
+                rpc_error(
+                    Value::Null,
+                    -32700,
+                    "Parse error - invalid JSON-RPC request",
+                ),
+            )
+        }
+    };
+
+    // Notifications (no id) get no JSON-RPC response.
+    let Some(id) = request.id.clone() else {
+        log::debug!("[MCP] Notification '{}'", request.method);
+        return empty(StatusCode::ACCEPTED);
+    };
+
+    log::debug!("[MCP] Request '{}' id={}", request.method, id);
+    respond(StatusCode::OK, dispatch(request, id).await)
+}
+
+// =============================================================================
+// JSON-RPC
+// =============================================================================
+
+#[derive(Debug, Deserialize, specta::Type)]
+struct RpcRequest {
+    method: String,
+    #[serde(default)]
+    params: Value,
+    #[serde(default)]
+    id: Option<Value>,
+}
+
+fn rpc_result(id: Value, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+fn rpc_error(id: Value, code: i32, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}
+
+async fn dispatch(request: RpcRequest, id: Value) -> Value {
+    match request.method.as_str() {
+        "initialize" => rpc_result(
+            id,
+            json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": "RustService MCP", "version": env!("CARGO_PKG_VERSION") }
+            }),
+        ),
+        "ping" => rpc_result(id, json!({})),
+        "tools/list" => rpc_result(id, tools::definitions()),
+        "tools/call" => {
+            let Some(name) = request.params.get("name").and_then(Value::as_str) else {
+                return rpc_error(id, -32602, "Missing tool name");
+            };
+            if !tools::exists(name) {
+                return rpc_error(id, -32602, &format!("Unknown tool: {}", name));
+            }
+            let arguments = request
+                .params
+                .get("arguments")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+
+            // Tool failures are results with isError, per the MCP spec.
+            let (text, is_error) = match tools::call(name, arguments).await {
+                Ok(text) => (text, false),
+                Err(e) => (e, true),
+            };
+            rpc_result(
+                id,
+                json!({ "content": [{ "type": "text", "text": text }], "isError": is_error }),
+            )
+        }
+        other => rpc_error(id, -32601, &format!("Method not found: {}", other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_time_eq_works() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn short_keys_do_not_start_server() {
+        let mut agent = AgentSettings {
+            mcp_server_enabled: true,
+            mcp_api_key: Some("short".into()),
+            ..AgentSettings::default()
+        };
+        assert!(desired_config(&agent).is_none());
+        agent.mcp_api_key = Some("0123456789abcdef0123".into());
+        let config = desired_config(&agent).unwrap();
+        assert!(!config.allow_remote);
+        agent.mcp_server_enabled = false;
+        assert!(desired_config(&agent).is_none());
+    }
 }

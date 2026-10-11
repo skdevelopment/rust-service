@@ -3,16 +3,12 @@
 //! Queries the Windows Registry for all installed programs.
 //! Reports software name, version, publisher, install date, and size.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -35,7 +31,7 @@ impl Service for InstalledSoftwareService {
             options: vec![ServiceOptionSchema {
                 id: "include_updates".to_string(),
                 label: "Include Windows Updates".to_string(),
-                option_type: "boolean".to_string(),
+                option_type: OptionType::Boolean,
                 default_value: json!(false),
                 min: None,
                 max: None,
@@ -48,34 +44,13 @@ impl Service for InstalledSoftwareService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "installed-software";
-
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let include_updates = options
             .get("include_updates")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        emit_log(
-            "Querying installed software from registry...",
-            &mut logs,
-            app,
-        );
+        ctx.log("Querying installed software from registry...");
 
         // PowerShell command to read both HKLM and HKCU uninstall keys
         let ps_script = r#"
@@ -90,57 +65,41 @@ $apps = foreach ($path in $paths) {
 $apps | ConvertTo-Json -Depth 3
 "#;
 
-        let output = match Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_script,
-            ])
-            .output()
-        {
+        let output = match ctx.output(crate::proc::command("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            ps_script,
+        ])) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run PowerShell: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run PowerShell: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Software Audit Failed".to_string(),
                     description: format!("Could not query registry: {}", e),
                     recommendation: Some("Ensure PowerShell is available.".to_string()),
                     data: Some(json!({"type": "installed_software", "error": true})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("PowerShell execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("PowerShell execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
 
-        emit_log("Parsing software inventory...", &mut logs, app);
+        ctx.log("Parsing software inventory...");
 
         // Parse JSON output
         let raw_apps: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
             Ok(serde_json::Value::Array(arr)) => arr,
             Ok(single) => vec![single], // Single result returns as object, not array
             Err(e) => {
-                emit_log(
-                    &format!("Warning: JSON parse error, trying line-by-line: {}", e),
-                    &mut logs,
-                    app,
-                );
+                ctx.log(format!(
+                    "Warning: JSON parse error, trying line-by-line: {}",
+                    e
+                ));
                 Vec::new()
             }
         };
@@ -220,14 +179,10 @@ $apps | ConvertTo-Json -Depth 3
         let total_size_mb: f64 = programs.iter().map(|p| p.size_kb as f64).sum::<f64>() / 1024.0;
         let total_count = programs.len();
 
-        emit_log(
-            &format!(
-                "Found {} programs, total estimated size: {:.1} MB",
-                total_count, total_size_mb
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Found {} programs, total estimated size: {:.1} MB",
+            total_count, total_size_mb
+        ));
 
         // Build program data for renderer
         let program_data: Vec<serde_json::Value> = programs
@@ -274,7 +229,7 @@ $apps | ConvertTo-Json -Depth 3
             })
             .collect();
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: FindingSeverity::Info,
             title: format!("{} Programs Installed", total_count),
             description: format!(
@@ -298,17 +253,9 @@ $apps | ConvertTo-Json -Depth 3
             })),
         });
 
-        emit_log("Software audit complete.", &mut logs, app);
+        ctx.log("Software audit complete.");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 

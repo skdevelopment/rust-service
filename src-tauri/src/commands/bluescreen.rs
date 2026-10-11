@@ -5,14 +5,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /// Summary of a BSOD crash
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BsodEntry {
     pub id: String,
@@ -27,7 +26,7 @@ pub struct BsodEntry {
 }
 
 /// Detailed BSOD analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BsodDetails {
     pub dump_path: String,
@@ -48,7 +47,7 @@ pub struct BsodDetails {
 }
 
 /// BSOD statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BsodStats {
     pub total_crashes: u32,
@@ -230,7 +229,12 @@ fn get_stop_code_info(code: &str) -> (Option<String>, Option<String>, Vec<String
 
 /// Get list of BSOD crash dumps
 #[tauri::command]
+#[specta::specta]
 pub async fn get_bsod_history() -> Result<Vec<BsodEntry>, String> {
+    crate::proc::blocking(get_bsod_history_blocking).await
+}
+
+fn get_bsod_history_blocking() -> Result<Vec<BsodEntry>, String> {
     let minidump_path = PathBuf::from(r"C:\Windows\Minidump");
     let memory_dmp = PathBuf::from(r"C:\Windows\MEMORY.DMP");
 
@@ -242,7 +246,7 @@ pub async fn get_bsod_history() -> Result<Vec<BsodEntry>, String> {
             for entry in dir.flatten() {
                 let path = entry.path();
                 if path.extension().map(|e| e == "dmp").unwrap_or(false) {
-                    if let Some(bsod) = parse_dump_basic(&path).await {
+                    if let Some(bsod) = parse_dump_basic(&path) {
                         entries.push(bsod);
                     }
                 }
@@ -252,7 +256,7 @@ pub async fn get_bsod_history() -> Result<Vec<BsodEntry>, String> {
 
     // Check for full memory dump
     if memory_dmp.exists() {
-        if let Some(bsod) = parse_dump_basic(&memory_dmp).await {
+        if let Some(bsod) = parse_dump_basic(&memory_dmp) {
             entries.push(bsod);
         }
     }
@@ -264,7 +268,7 @@ pub async fn get_bsod_history() -> Result<Vec<BsodEntry>, String> {
 }
 
 /// Parse basic information from a dump file
-async fn parse_dump_basic(path: &PathBuf) -> Option<BsodEntry> {
+fn parse_dump_basic(path: &PathBuf) -> Option<BsodEntry> {
     let metadata = fs::metadata(path).ok()?;
     let file_size = metadata.len();
 
@@ -282,7 +286,7 @@ async fn parse_dump_basic(path: &PathBuf) -> Option<BsodEntry> {
     let id = file_name.replace(".dmp", "").replace(".", "_");
 
     // Try to extract stop code from the dump using PowerShell
-    let output = Command::new("powershell")
+    let output = crate::proc::output_with_timeout(crate::proc::command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -310,11 +314,12 @@ async fn parse_dump_basic(path: &PathBuf) -> Option<BsodEntry> {
                 "#,
                 path.to_string_lossy()
             ),
-        ])
-        .output()
+        ]), crate::proc::QUERY_TIMEOUT)
         .ok()?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = crate::proc::decode_output(&output.stdout)
+        .trim()
+        .to_string();
     let stop_code = if stdout.starts_with("0x") {
         stdout
     } else {
@@ -339,7 +344,12 @@ async fn parse_dump_basic(path: &PathBuf) -> Option<BsodEntry> {
 
 /// Get detailed BSOD analysis for a specific dump
 #[tauri::command]
+#[specta::specta]
 pub async fn get_bsod_details(dump_path: String) -> Result<BsodDetails, String> {
+    crate::proc::blocking(move || get_bsod_details_blocking(dump_path)).await
+}
+
+fn get_bsod_details_blocking(dump_path: String) -> Result<BsodDetails, String> {
     let path = PathBuf::from(&dump_path);
 
     if !path.exists() {
@@ -368,7 +378,7 @@ pub async fn get_bsod_details(dump_path: String) -> Result<BsodDetails, String> 
     };
 
     // Try to get more info from event logs
-    let (stop_code, faulting_module, parameters) = get_crash_info_from_events(&crash_time).await;
+    let (stop_code, faulting_module, parameters) = get_crash_info_from_events(&crash_time);
 
     let (stop_code_name, stop_code_description, possible_causes) = get_stop_code_info(&stop_code);
 
@@ -395,9 +405,9 @@ pub async fn get_bsod_details(dump_path: String) -> Result<BsodDetails, String> 
 }
 
 /// Get crash info from Windows Event Log
-async fn get_crash_info_from_events(_crash_time: &str) -> (String, Option<String>, Vec<String>) {
-    let output = Command::new("powershell")
-        .args([
+fn get_crash_info_from_events(_crash_time: &str) -> (String, Option<String>, Vec<String>) {
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
             "-NoProfile",
             "-Command",
             r#"
@@ -428,11 +438,12 @@ async fn get_crash_info_from_events(_crash_time: &str) -> (String, Option<String
                 $result | ConvertTo-Json
             }
             "#,
-        ])
-        .output();
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    );
 
     if let Ok(output) = output {
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = crate::proc::decode_output(&output.stdout);
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout) {
             let stop_code = parsed["StopCode"].as_str().unwrap_or("Unknown").to_string();
             let module = parsed["Module"]
@@ -508,8 +519,13 @@ fn generate_recommendations(stop_code: &str, module: &Option<String>) -> Vec<Str
 
 /// Get BSOD statistics
 #[tauri::command]
+#[specta::specta]
 pub async fn get_bsod_stats() -> Result<BsodStats, String> {
-    let entries = get_bsod_history().await?;
+    crate::proc::blocking(get_bsod_stats_blocking).await
+}
+
+fn get_bsod_stats_blocking() -> Result<BsodStats, String> {
+    let entries = get_bsod_history_blocking()?;
 
     let now = chrono::Utc::now();
     let seven_days_ago = now - chrono::Duration::days(7);
@@ -566,20 +582,33 @@ pub async fn get_bsod_stats() -> Result<BsodStats, String> {
 
 /// Delete a crash dump file
 #[tauri::command]
+#[specta::specta]
 pub async fn delete_crash_dump(dump_path: String) -> Result<(), String> {
-    let path = PathBuf::from(&dump_path);
+    crate::proc::blocking(move || delete_crash_dump_blocking(dump_path)).await
+}
 
-    if !path.exists() {
-        return Err("Dump file not found".to_string());
+fn delete_crash_dump_blocking(dump_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&dump_path)
+        .canonicalize()
+        .map_err(|_| "Dump file not found".to_string())?;
+
+    // Only crash dumps Windows writes: <SystemRoot>\Minidump\*.dmp or <SystemRoot>\MEMORY.DMP
+    let system_root =
+        PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()));
+    let minidump_dir = system_root.join("Minidump").canonicalize().ok();
+    let memory_dmp = system_root.join("MEMORY.DMP").canonicalize().ok();
+
+    let is_dmp = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("dmp"));
+    let in_minidump = minidump_dir.is_some_and(|dir| path.parent() == Some(dir.as_path()));
+    let is_memory_dmp = memory_dmp.is_some_and(|m| m == path);
+
+    if !(is_dmp && (in_minidump || is_memory_dmp)) {
+        return Err(
+            r"Can only delete crash dumps in Windows\Minidump or Windows\MEMORY.DMP".to_string(),
+        );
     }
 
-    // Only allow deleting from Minidump folder or MEMORY.DMP
-    let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("minidump") && !path_str.contains("memory.dmp") {
-        return Err("Can only delete files from Windows\\Minidump or MEMORY.DMP".to_string());
-    }
-
-    fs::remove_file(&path).map_err(|e| format!("Failed to delete dump file: {}", e))?;
-
-    Ok(())
+    fs::remove_file(&path).map_err(|e| format!("Failed to delete dump file: {}", e))
 }

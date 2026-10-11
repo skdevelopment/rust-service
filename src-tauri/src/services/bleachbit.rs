@@ -4,16 +4,12 @@
 //! structured metrics (space reclaimed, files deleted, etc.).
 
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -39,26 +35,8 @@ impl Service for BleachBitService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "bleachbit";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting BleachBit cleanup...", &mut logs, app);
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting BleachBit cleanup...");
 
         // Get BleachBit executable path - prefer bleachbit_console.exe
         let exe_path = match get_program_exe_path("bleachbit".to_string()) {
@@ -77,8 +55,8 @@ impl Service for BleachBitService {
                 }
             }
             Ok(None) => {
-                emit_log("ERROR: BleachBit.exe not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: BleachBit.exe not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "BleachBit Not Found".to_string(),
                     description: "BleachBit executable was not found.".to_string(),
@@ -88,35 +66,15 @@ impl Service for BleachBitService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("BleachBit.exe not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("BleachBit.exe not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate BleachBit: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate BleachBit: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(&format!("Found BleachBit at: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Found BleachBit at: {}", exe_path));
 
         // Default cleaners to run
         let cleaners = vec![
@@ -136,22 +94,17 @@ impl Service for BleachBitService {
             args.push(cleaner);
         }
 
-        emit_log(
-            &format!("Running BleachBit with {} cleaners...", cleaners.len()),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Running BleachBit with {} cleaners...",
+            cleaners.len()
+        ));
 
         // Execute BleachBit
-        let output = match Command::new(&exe_path).args(&args).output() {
+        let output = match ctx.output(crate::proc::command(&exe_path).args(&args)) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute BleachBit: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute BleachBit: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run BleachBit: {}", e),
@@ -160,46 +113,26 @@ impl Service for BleachBitService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("BleachBit completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("BleachBit completed with exit code: {}", exit_code));
 
         // Parse output
         let parsed = parse_bleachbit_output(&stdout);
 
         // Log parsed results
-        emit_log(
-            &format!(
-                "Space recovered: {} bytes ({:.2} MB)",
-                parsed.space_recovered_bytes,
-                parsed.space_recovered_bytes as f64 / (1024.0 * 1024.0)
-            ),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            &format!("Files deleted: {}", parsed.files_deleted),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Space recovered: {} bytes ({:.2} MB)",
+            parsed.space_recovered_bytes,
+            parsed.space_recovered_bytes as f64 / (1024.0 * 1024.0)
+        ));
+        ctx.log(format!("Files deleted: {}", parsed.files_deleted));
 
         // Determine severity based on results
         let (severity, status) = if parsed.errors > 0 {
@@ -214,7 +147,7 @@ impl Service for BleachBitService {
         let space_str = format_bytes(parsed.space_recovered_bytes);
 
         // Main summary finding
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: severity.clone(),
             title: status.to_string(),
             description: format!(
@@ -238,20 +171,12 @@ impl Service for BleachBitService {
 
         // Log any stderr output for debugging
         if !stderr.is_empty() && exit_code != 0 {
-            emit_log(&format!("Stderr: {}", stderr.trim()), &mut logs, app);
+            ctx.log(format!("Stderr: {}", stderr.trim()));
         }
 
-        emit_log("BleachBit cleanup complete", &mut logs, app);
+        ctx.log("BleachBit cleanup complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0 || parsed.errors == 0,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(exit_code == 0 || parsed.errors == 0, None)
     }
 }
 

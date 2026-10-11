@@ -4,7 +4,6 @@
  * Manage data folder location and logging preferences.
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import {
   FolderOpen,
   Info,
@@ -23,14 +22,15 @@ import {
 } from '@/components/ui/select';
 import { useSettings } from '@/components/settings-context';
 import type { LogLevel } from '@/types/settings';
+import { commands } from '@/bindings';
 
 export function DataPanel() {
   const { settings, updateSetting, isLoading } = useSettings();
 
   const handleOpenDataFolder = async () => {
     try {
-      const dataDir = await invoke<string>('get_data_dir');
-      await invoke('open_folder', { path: dataDir });
+      const dataDir = await commands.getDataDir();
+      await commands.openFolder(dataDir);
     } catch (error) {
       console.error('Failed to open data folder:', error);
     }

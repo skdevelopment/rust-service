@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   MessageSquarePlus,
   ChevronDown,
@@ -33,6 +32,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { Conversation } from '@/types/agent';
+import { commands } from '@/bindings';
 
 interface ConversationSelectorProps {
   currentConversationId: string | null;
@@ -90,7 +90,7 @@ export function ConversationSelector({
   const loadConversations = async () => {
     setLoading(true);
     try {
-      const data = await invoke<Conversation[]>('list_conversations', { limit: 50 });
+      const data = await commands.listConversations(50);
       setConversations(data);
     } catch (err) {
       console.error('Failed to load conversations:', err);
@@ -115,7 +115,7 @@ export function ConversationSelector({
     if (!conversationToDelete) return;
     
     try {
-      await invoke('delete_conversation', { conversationId: conversationToDelete.id });
+      await commands.deleteConversation(conversationToDelete.id);
       setConversations(prev => prev.filter(c => c.id !== conversationToDelete.id));
       
       // If we deleted the current conversation, trigger new chat

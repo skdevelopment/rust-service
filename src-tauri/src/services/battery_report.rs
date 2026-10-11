@@ -4,17 +4,12 @@
 //! (via the `battery` crate) with detailed capacity history and degradation
 //! analysis from Windows `powercfg /batteryreport`.
 
-use std::process::Command;
-use std::time::Instant;
-
 use battery::units::ratio::percent;
 use battery::units::time::second;
 use battery::Manager;
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -41,26 +36,9 @@ impl Service for BatteryReportService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "battery-report";
-
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // ── Real-time battery status via battery crate ──────────────────
-        emit_log("Checking battery status...", &mut logs, app);
+        ctx.log("Checking battery status...");
 
         let mut realtime_charge: Option<f32> = None;
         let mut realtime_state: Option<String> = None;
@@ -77,14 +55,17 @@ impl Service for BatteryReportService {
                     .unwrap_or_default();
 
                 if batteries.is_empty() {
-                    emit_log("No battery detected via system API", &mut logs, app);
+                    ctx.log("No battery detected via system API");
                 } else {
                     let bat = &batteries[0];
                     let charge = bat.state_of_charge().get::<percent>();
                     let state = format!("{:?}", bat.state());
                     let tech = format!("{:?}", bat.technology());
 
-                    emit_log(&format!("  Charge: {:.0}% | State: {} | Tech: {}", charge, state, tech), &mut logs, app);
+                    ctx.log(format!(
+                        "  Charge: {:.0}% | State: {} | Tech: {}",
+                        charge, state, tech
+                    ));
 
                     realtime_charge = Some(charge);
                     realtime_state = Some(state);
@@ -94,30 +75,28 @@ impl Service for BatteryReportService {
                 }
             }
             Err(e) => {
-                emit_log(&format!("Could not read real-time battery info: {}", e), &mut logs, app);
+                ctx.log(format!("Could not read real-time battery info: {}", e));
             }
         }
 
         // ── Detailed report via powercfg /batteryreport ────────────────
-        emit_log("Generating battery report...", &mut logs, app);
+        ctx.log("Generating battery report...");
 
         let temp_dir = std::env::temp_dir();
         let output_path = temp_dir.join("rustservice_battery_report.html");
         let output_path_str = output_path.to_string_lossy().to_string();
 
-        let result = Command::new("powercfg")
-            .args(["/batteryreport", "/output", &output_path_str])
-            .output();
+        let result = ctx.output(crate::proc::command("powercfg").args([
+            "/batteryreport",
+            "/output",
+            &output_path_str,
+        ]));
 
         let output = match result {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run powercfg: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run powercfg: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Battery Report Failed".to_string(),
                     description: format!("Could not execute powercfg: {}", e),
@@ -126,27 +105,15 @@ impl Service for BatteryReportService {
                     ),
                     data: Some(json!({"type": "battery_report", "error": true})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("powercfg execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("powercfg execution failed: {}", e)));
             }
         };
 
         let exit_code = output.status.code().unwrap_or(-1);
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr_str = crate::proc::decode_output(&output.stderr).to_string();
+        let stdout_str = crate::proc::decode_output(&output.stdout).to_string();
 
-        emit_log(
-            &format!("powercfg exited with code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("powercfg exited with code: {}", exit_code));
 
         // Check for no battery (powercfg says no battery AND the crate found none)
         if (stdout_str.contains("no batteries")
@@ -154,8 +121,8 @@ impl Service for BatteryReportService {
             || stdout_str.contains("Unable to perform operation"))
             && realtime_charge.is_none()
         {
-            emit_log("No battery detected on this system.", &mut logs, app);
-            findings.push(ServiceFinding {
+            ctx.log("No battery detected on this system.");
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Info,
                 title: "No Battery Detected".to_string(),
                 description: "This system does not have a battery. Battery report is not available on desktop computers.".to_string(),
@@ -165,46 +132,26 @@ impl Service for BatteryReportService {
                     "noBattery": true,
                 })),
             });
-            return ServiceResult {
-                service_id: service_id.to_string(),
-                success: true,
-                error: None,
-                duration_ms: start.elapsed().as_millis() as u64,
-                findings,
-                logs,
-                agent_analysis: None,
-            };
+            return ctx.finish(true, None);
         }
 
         // Read and parse the HTML report
         let html_content = match std::fs::read_to_string(&output_path) {
             Ok(content) => content,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Could not read report file: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Could not read report file: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Report Read Failed".to_string(),
                     description: format!("Could not read battery report: {}", e),
                     recommendation: Some("Try running as administrator.".to_string()),
                     data: Some(json!({"type": "battery_report", "error": true})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("Failed to read battery report".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("Failed to read battery report".to_string()));
             }
         };
 
-        emit_log("Parsing battery report...", &mut logs, app);
+        ctx.log("Parsing battery report...");
 
         let parsed = parse_battery_html(&html_content);
 
@@ -217,17 +164,13 @@ impl Service for BatteryReportService {
                 0.0
             };
 
-        emit_log(
-            &format!(
-                "Design capacity: {} mWh, Full charge: {} mWh, Health: {:.1}%",
-                parsed.design_capacity_mwh, parsed.full_charge_capacity_mwh, health_percent
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Design capacity: {} mWh, Full charge: {} mWh, Health: {:.1}%",
+            parsed.design_capacity_mwh, parsed.full_charge_capacity_mwh, health_percent
+        ));
 
         if let Some(cycles) = parsed.cycle_count {
-            emit_log(&format!("Cycle count: {}", cycles), &mut logs, app);
+            ctx.log(format!("Cycle count: {}", cycles));
         }
 
         // Determine battery health severity
@@ -288,7 +231,7 @@ impl Service for BatteryReportService {
             })
             .collect();
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -314,17 +257,9 @@ impl Service for BatteryReportService {
         // Clean up temp file
         let _ = std::fs::remove_file(&output_path);
 
-        emit_log("Battery report analysis complete.", &mut logs, app);
+        ctx.log("Battery report analysis complete.");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 

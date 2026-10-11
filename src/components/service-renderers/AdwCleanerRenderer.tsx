@@ -253,7 +253,7 @@ function CustomerRenderer({ result }: ServiceRendererProps) {
     );
   }
 
-  const { cleaned, failed, categories } = summaryData;
+  const { failed, categories } = summaryData;
   const totalItems = categories.reduce((acc, c) => acc + c.count, 0);
   const isClean = totalItems === 0;
   const hasIssues = failed > 0;

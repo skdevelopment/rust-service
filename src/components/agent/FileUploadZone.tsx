@@ -6,13 +6,13 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { Upload, X, File, Loader2, Check } from 'lucide-react';
+import { Upload, X, File, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import type { FileAttachment, FileUploadState } from '@/types/file-attachment';
 import { formatFileSize, getCategoryFromExtension, FILE_SIZE_LIMITS } from '@/types/file-attachment';
-import { invoke } from '@tauri-apps/api/core';
+import { commands } from '@/bindings';
 
 interface FileUploadZoneProps {
   onFilesUploaded: (attachments: FileAttachment[]) => void;
@@ -45,7 +45,9 @@ export function FileUploadZone({
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  // Plain functions (not memoized) so they always see the current uploads
+  // when enforcing the file-count and size limits.
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -54,16 +56,16 @@ export function FileUploadZone({
 
     const files = Array.from(e.dataTransfer.files);
     handleFiles(files);
-  }, [disabled]);
+  };
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     handleFiles(files);
     // Reset input
     if (inputRef.current) {
       inputRef.current.value = '';
     }
-  }, []);
+  };
 
   const handleFiles = async (files: File[]) => {
     // Check max files
@@ -116,12 +118,7 @@ export function FileUploadZone({
       ));
 
       // Call Tauri command
-      const attachment = await invoke<FileAttachment>('save_uploaded_file', {
-        file_name: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        size: file.size,
-        content_base64: base64,
-      });
+      const attachment = await commands.saveUploadedFile(file.name, file.type || 'application/octet-stream', file.size, base64);
 
       // Update to complete
       setUploads(prev => prev.map(u =>

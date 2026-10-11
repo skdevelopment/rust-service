@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   AppWindow,
   Play,
@@ -34,6 +33,7 @@ import {
 } from '@/components/ui/tooltip';
 
 import type { Program } from '@/types/programs';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Program Card Component
@@ -60,7 +60,7 @@ export function ProgramCard({
   // Load icon via backend command
   useEffect(() => {
     if (program.iconPath) {
-      invoke<string | null>('get_program_icon', { iconPath: program.iconPath })
+      commands.getProgramIcon(program.iconPath)
         .then(url => setIconUrl(url))
         .catch(() => setIconUrl(null));
     } else {

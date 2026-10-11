@@ -66,7 +66,7 @@ export async function connectMCPServers(
 
   const connections: ConnectedServer[] = [];
   const errors: Array<{ serverId: string; serverName: string; error: string }> = [];
-  let mergedTools: ToolSet = {};
+  const mergedTools: ToolSet = {};
 
   // Connect to each server individually (don't let one failure break all)
   for (const config of enabledConfigs) {
@@ -99,7 +99,7 @@ export async function connectMCPServers(
       // Prefix tool names with server ID to avoid collisions
       for (const [toolName, toolDef] of Object.entries(tools)) {
         const prefixedName = `mcp_${config.id}_${toolName}`;
-        mergedTools[prefixedName] = toolDef as any;
+        mergedTools[prefixedName] = toolDef as ToolSet[string];
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);

@@ -4,18 +4,15 @@
 //! Parses console output for FPS metrics, GPU temperature, and usage stats.
 
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -37,7 +34,7 @@ impl Service for FurmarkService {
                 ServiceOptionSchema {
                     id: "duration_seconds".to_string(),
                     label: "Duration (seconds)".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(60),
                     min: Some(10.0),
                     max: Some(600.0),
@@ -47,7 +44,7 @@ impl Service for FurmarkService {
                 ServiceOptionSchema {
                     id: "width".to_string(),
                     label: "Width".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(1920),
                     min: Some(640.0),
                     max: Some(3840.0),
@@ -57,7 +54,7 @@ impl Service for FurmarkService {
                 ServiceOptionSchema {
                     id: "height".to_string(),
                     label: "Height".to_string(),
-                    option_type: "number".to_string(),
+                    option_type: OptionType::Number,
                     default_value: json!(1080),
                     min: Some(480.0),
                     max: Some(2160.0),
@@ -71,33 +68,15 @@ impl Service for FurmarkService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "furmark";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting FurMark GPU stress test...", &mut logs, app);
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting FurMark GPU stress test...");
 
         // Get FurMark executable path
         let exe_path = match get_program_exe_path("furmark".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: FurMark executable not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: FurMark executable not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "FurMark Not Found".to_string(),
                     description: "FurMark executable was not found.".to_string(),
@@ -107,35 +86,15 @@ impl Service for FurmarkService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("FurMark executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("FurMark executable not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate FurMark: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate FurMark: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(&format!("Found FurMark at: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Found FurMark at: {}", exe_path));
 
         // Parse options
         let duration = options
@@ -151,14 +110,10 @@ impl Service for FurmarkService {
             .and_then(|v| v.as_i64())
             .unwrap_or(1080) as u32;
 
-        emit_log(
-            &format!(
-                "Running {}x{} stress test for {} seconds...",
-                width, height, duration
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Running {}x{} stress test for {} seconds...",
+            width, height, duration
+        ));
 
         // Build command arguments
         let args = vec![
@@ -179,19 +134,15 @@ impl Service for FurmarkService {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
         // Execute FurMark
-        let output = match Command::new(&exe_path)
-            .args(&args)
-            .current_dir(&working_dir)
-            .output()
-        {
+        let output = match ctx.output(
+            crate::proc::command(&exe_path)
+                .args(&args)
+                .current_dir(&working_dir),
+        ) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute FurMark: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute FurMark: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run FurMark: {}", e),
@@ -200,31 +151,19 @@ impl Service for FurmarkService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("FurMark completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("FurMark completed with exit code: {}", exit_code));
 
         if exit_code != 0 {
-            emit_log("FurMark exited with non-zero code", &mut logs, app);
-            findings.push(ServiceFinding {
+            ctx.log("FurMark exited with non-zero code");
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Error,
                 title: "Test Failed".to_string(),
                 description: format!("FurMark exited with code {}", exit_code),
@@ -238,15 +177,7 @@ impl Service for FurmarkService {
                     "stderr": stderr.chars().take(500).collect::<String>(),
                 })),
             });
-            return ServiceResult {
-                service_id: service_id.to_string(),
-                success: false,
-                error: Some(format!("Exit code: {}", exit_code)),
-                duration_ms: start.elapsed().as_millis() as u64,
-                findings,
-                logs,
-                agent_analysis: None,
-            };
+            return ctx.finish(false, Some(format!("Exit code: {}", exit_code)));
         }
 
         // Parse output
@@ -254,22 +185,22 @@ impl Service for FurmarkService {
 
         // Log results
         if let Some(ref renderer) = parsed.renderer {
-            emit_log(&format!("GPU: {}", renderer), &mut logs, app);
+            ctx.log(format!("GPU: {}", renderer));
         }
         if let Some(avg) = parsed.fps_avg {
-            emit_log(&format!("Average FPS: {}", avg), &mut logs, app);
+            ctx.log(format!("Average FPS: {}", avg));
         }
         if let Some(frames) = parsed.frames {
-            emit_log(&format!("Total frames: {}", frames), &mut logs, app);
+            ctx.log(format!("Total frames: {}", frames));
         }
 
         // Log GPU metrics if available
         if let Some(gpu) = parsed.gpus.first() {
             if let Some(temp) = gpu.max_temperature_c {
-                emit_log(&format!("Max GPU temperature: {}°C", temp), &mut logs, app);
+                ctx.log(format!("Max GPU temperature: {}°C", temp));
             }
             if let Some(usage) = gpu.max_usage_percent {
-                emit_log(&format!("Max GPU usage: {}%", usage), &mut logs, app);
+                ctx.log(format!("Max GPU usage: {}%", usage));
             }
         }
 
@@ -319,7 +250,7 @@ impl Service for FurmarkService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -347,17 +278,9 @@ impl Service for FurmarkService {
             })),
         });
 
-        emit_log("FurMark stress test complete", &mut logs, app);
+        ctx.log("FurMark stress test complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 
@@ -365,7 +288,7 @@ impl Service for FurmarkService {
 // Output Parsing
 // =============================================================================
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, specta::Type)]
 struct FurmarkGpuInfo {
     index: u32,
     name: String,
@@ -376,7 +299,7 @@ struct FurmarkGpuInfo {
     min_core_clock_mhz: Option<u32>,
 }
 
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Debug, Default, serde::Serialize, specta::Type)]
 struct FurmarkParsedOutput {
     demo: Option<String>,
     renderer: Option<String>,
@@ -389,13 +312,13 @@ struct FurmarkParsedOutput {
     gpus: Vec<FurmarkGpuInfo>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 struct Resolution {
     width: u32,
     height: u32,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 struct FpsStats {
     min: u32,
     avg: u32,

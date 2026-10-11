@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect, ReactNode, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Wrench,
   Monitor,
@@ -53,6 +52,8 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { SettingsProvider, useSettings } from '@/components/settings-context';
 import { AnimationProvider, useAnimation, motion, AnimatePresence, tabContentVariants } from '@/components/animation-context';
 import { ServiceRunProvider } from '@/components/service-run-context';
+import { AgentSessionProvider } from '@/components/agent-session-context';
+import { NAVIGATE_TAB_EVENT } from '@/lib/navigation';
 import { FloatingServiceStatus } from '@/components/floating-service-status';
 import { Titlebar } from '@/components/titlebar';
 import { IframeTabContent } from '@/components/IframeTabContent';
@@ -75,6 +76,7 @@ import {
 import type { TechnicianTab } from '@/types/settings';
 
 import '@/styles/globals.css';
+import { commands } from '@/bindings';
 
 /** Maps icon ID strings to Lucide icon components */
 function getIconComponent(iconId: string): React.ComponentType<{ className?: string }> {
@@ -228,8 +230,8 @@ function AppContent() {
       }
     };
 
-    window.addEventListener('navigate-tab', handler as EventListener);
-    return () => window.removeEventListener('navigate-tab', handler as EventListener);
+    window.addEventListener(NAVIGATE_TAB_EVENT, handler as EventListener);
+    return () => window.removeEventListener(NAVIGATE_TAB_EVENT, handler as EventListener);
   }, [technicianTabs]);
 
   return (
@@ -401,7 +403,7 @@ function App() {
   useEffect(() => {
     async function initializeDataDir() {
       try {
-        await invoke('ensure_data_dir');
+        await commands.ensureDataDir();
       } catch (error) {
         console.error('Failed to initialize data directory:', error);
       }
@@ -410,17 +412,19 @@ function App() {
   }, []);
 
   return (
-    <ThemeProvider defaultTheme="system">
-      <SettingsProvider>
+    <SettingsProvider>
+      <ThemeProvider>
         <AnimationProvider>
           <ServiceRunProvider>
-            <ErrorBoundary>
-              <AppContent />
-            </ErrorBoundary>
+            <AgentSessionProvider>
+              <ErrorBoundary>
+                <AppContent />
+              </ErrorBoundary>
+            </AgentSessionProvider>
           </ServiceRunProvider>
         </AnimationProvider>
-      </SettingsProvider>
-    </ThemeProvider>
+      </ThemeProvider>
+    </SettingsProvider>
   );
 }
 

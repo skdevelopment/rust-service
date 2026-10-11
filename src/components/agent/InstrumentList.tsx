@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import type { Instrument } from '@/types/agent';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Play, FileCode, RefreshCw } from 'lucide-react';
+import { commands } from '@/bindings';
 
 interface InstrumentListProps {
   onRunInstrument: (name: string) => void;
@@ -19,7 +19,7 @@ export function InstrumentList({ onRunInstrument, hideHeader = false }: Instrume
   const loadInstruments = async () => {
     setLoading(true);
     try {
-      const data = await invoke<Instrument[]>('list_instruments');
+      const data = await commands.listInstruments();
       setInstruments(data);
     } catch (err) {
       console.error('Failed to load instruments:', err);

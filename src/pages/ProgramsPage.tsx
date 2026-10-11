@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   AppWindow,
   Plus,
@@ -51,6 +50,7 @@ import {
   ProgramCard,
   EmptyState,
 } from '@/components/programs';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Main Component
@@ -77,7 +77,7 @@ export function ProgramsPage() {
   // Refresh programs list
   const refreshPrograms = async () => {
     try {
-      const programsList = await invoke<Program[]>('get_programs');
+      const programsList = await commands.getPrograms();
       setPrograms(programsList);
     } catch (e) {
       console.error('Failed to refresh programs:', e);
@@ -88,7 +88,7 @@ export function ProgramsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const programsList = await invoke<Program[]>('get_programs');
+        const programsList = await commands.getPrograms();
         setPrograms(programsList);
       } catch (e) {
         console.error('Failed to load programs:', e);
@@ -190,21 +190,22 @@ export function ProgramsPage() {
   }) => {
     if (editingProgram) {
       // Update existing
-      const updated = await invoke<Program>('update_program', {
-        id: editingProgram.id,
-        ...data,
-      });
+      const updated = await commands.updateProgram(
+        editingProgram.id, data.name, data.description, data.version, data.exePath, data.isCli, data.iconPath,
+      );
       setPrograms(prev => prev.map(p => p.id === updated.id ? updated : p));
     } else {
       // Add new
-      const created = await invoke<Program>('add_program', data);
+      const created = await commands.addProgram(
+        data.name, data.description, data.version, data.exePath, data.isCli, data.iconPath,
+      );
       setPrograms(prev => [...prev, created]);
     }
   };
 
   const handleLaunchProgram = async (id: string) => {
     try {
-      await invoke('launch_program', { id });
+      await commands.launchProgram(id);
       // Update local state with incremented launch count
       setPrograms(prev => prev.map(p => {
         if (p.id === id) {
@@ -223,7 +224,7 @@ export function ProgramsPage() {
 
   const handleDeleteProgram = async (id: string) => {
     try {
-      await invoke('delete_program', { id });
+      await commands.deleteProgram(id);
       setPrograms(prev => prev.filter(p => p.id !== id));
     } catch (e) {
       console.error('Failed to delete program:', e);
@@ -232,7 +233,7 @@ export function ProgramsPage() {
 
   const handleRevealProgram = async (id: string) => {
     try {
-      await invoke('reveal_program', { id });
+      await commands.revealProgram(id);
     } catch (e) {
       console.error('Failed to reveal program:', e);
     }

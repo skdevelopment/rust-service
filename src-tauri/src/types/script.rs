@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Type of script interpreter
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum ScriptType {
@@ -18,9 +18,8 @@ pub enum ScriptType {
     Cmd,
 }
 
-
 /// Represents a saved script managed by RustService
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Script {
     /// Unique identifier for the script
@@ -67,7 +66,7 @@ impl Script {
 }
 
 /// Configuration for all scripts, stored in data/scripts.json
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptConfig {
     /// List of all managed scripts

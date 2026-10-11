@@ -5,7 +5,7 @@
  * navigates away from the service tab. Clicking it returns to the service tab.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -18,6 +18,7 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { useServiceRun } from '@/components/service-run-context';
 import { useAnimation } from '@/components/animation-context';
+import { navigateTo } from '@/lib/navigation';
 
 // =============================================================================
 // Types
@@ -45,7 +46,7 @@ export function FloatingServiceStatus({ activeTab }: FloatingServiceStatusProps)
 
   // Track completion dismissal
   const [dismissed, setDismissed] = useState(false);
-  const [completionTimerId, setCompletionTimerId] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isOnServiceTab = activeTab === 'service';
   const isComplete = phase === 'completed' || phase === 'failed' || phase === 'cancelled';
@@ -54,9 +55,9 @@ export function FloatingServiceStatus({ activeTab }: FloatingServiceStatusProps)
   useEffect(() => {
     if (isRunning) {
       setDismissed(false);
-      if (completionTimerId) {
-        clearTimeout(completionTimerId);
-        setCompletionTimerId(null);
+      if (completionTimerRef.current) {
+        clearTimeout(completionTimerRef.current);
+        completionTimerRef.current = null;
       }
     }
   }, [isRunning]);
@@ -67,7 +68,7 @@ export function FloatingServiceStatus({ activeTab }: FloatingServiceStatusProps)
       const timer = setTimeout(() => {
         setDismissed(true);
       }, 8000);
-      setCompletionTimerId(timer);
+      completionTimerRef.current = timer;
       return () => clearTimeout(timer);
     }
   }, [isComplete, isOnServiceTab, dismissed]);
@@ -76,7 +77,7 @@ export function FloatingServiceStatus({ activeTab }: FloatingServiceStatusProps)
   const shouldShow = !isOnServiceTab && !dismissed && (isRunning || (isComplete && !dismissed));
 
   const navigateToService = () => {
-    window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'service' }));
+    navigateTo('service');
     setDismissed(true);
   };
 

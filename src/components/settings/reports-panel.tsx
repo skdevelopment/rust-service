@@ -5,7 +5,6 @@
  */
 
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   FolderOpen,
   FileText,
@@ -18,7 +17,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { useSettings } from '@/components/settings-context';
+import { useSettings, useDebouncedSetting } from '@/components/settings-context';
+import { commands } from '@/bindings';
 
 export function ReportsPanel() {
   const { settings, updateSetting, isLoading } = useSettings();
@@ -28,9 +28,11 @@ export function ReportsPanel() {
     await updateSetting('reports.autoSaveReports', checked);
   };
 
-  const handleRetentionChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value) || 0;
-    await updateSetting('reports.reportRetentionDays', value);
+  // Saved after typing stops, so "30" is never stored as an interim "3"
+  const [retentionDays, setRetentionDays] = useDebouncedSetting('reports.reportRetentionDays');
+  const handleRetentionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.min(3650, Math.max(0, parseInt(e.target.value) || 0));
+    setRetentionDays(value);
   };
 
   const handleIncludeLogsChange = async (checked: boolean) => {
@@ -43,7 +45,7 @@ export function ReportsPanel() {
     }
     setIsClearing(true);
     try {
-      const count = await invoke<number>('clear_all_reports');
+      const count = await commands.clearAllReports();
       alert(`Deleted ${count} report${count !== 1 ? 's' : ''}.`);
     } catch (error) {
       console.error('Failed to clear reports:', error);
@@ -55,8 +57,8 @@ export function ReportsPanel() {
 
   const handleOpenReportsFolder = async () => {
     try {
-      const dataDir = await invoke<string>('get_data_dir');
-      await invoke('open_folder', { path: `${dataDir}\\reports` });
+      const dataDir = await commands.getDataDir();
+      await commands.openFolder(`${dataDir}\\reports`);
     } catch (error) {
       console.error('Failed to open reports folder:', error);
     }
@@ -132,7 +134,7 @@ export function ReportsPanel() {
                 type="number"
                 min={0}
                 max={365}
-                value={settings.reports?.reportRetentionDays ?? 0}
+                value={retentionDays ?? 0}
                 onChange={handleRetentionChange}
                 disabled={isLoading}
                 className="w-20 text-center"

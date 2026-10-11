@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   ScrollText,
   Plus,
@@ -56,6 +55,7 @@ import { fuzzyMatch } from '@/lib/search-utils';
 import { sortScripts } from '@/lib/script-utils';
 import { ScriptDialog } from '@/components/scripts/ScriptDialog';
 import { AIScriptDialog } from '@/components/scripts/AIScriptDialog';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Script Card Component
@@ -213,7 +213,7 @@ export function ScriptsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const scriptsList = await invoke<Script[]>('get_scripts');
+        const scriptsList = await commands.getScripts();
         setScripts(scriptsList);
       } catch (e) {
         console.error('Failed to load scripts:', e);
@@ -283,23 +283,24 @@ export function ScriptsPage() {
   }) => {
     if (editingScript) {
       // Update existing
-      const updated = await invoke<Script>('update_script', {
-        id: editingScript.id,
-        ...data,
-      });
+      const updated = await commands.updateScript(
+        editingScript.id, data.name, data.description, data.scriptType, data.content, data.runAsAdmin,
+      );
       setScripts((prev) =>
         prev.map((s) => (s.id === updated.id ? updated : s))
       );
     } else {
       // Add new
-      const created = await invoke<Script>('add_script', data);
+      const created = await commands.addScript(
+        data.name, data.description, data.scriptType, data.content, data.runAsAdmin,
+      );
       setScripts((prev) => [...prev, created]);
     }
   };
 
   const handleRunScript = async (id: string) => {
     try {
-      await invoke('run_script', { id });
+      await commands.runScript(id);
 
       // Update local state with incremented run count
       setScripts((prev) =>
@@ -321,7 +322,7 @@ export function ScriptsPage() {
 
   const handleDeleteScript = async (id: string) => {
     try {
-      await invoke('delete_script', { id });
+      await commands.deleteScript(id);
       setScripts((prev) => prev.filter((s) => s.id !== id));
     } catch (e) {
       console.error('Failed to delete script:', e);

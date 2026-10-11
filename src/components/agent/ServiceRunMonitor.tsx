@@ -7,26 +7,13 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { ServiceRunState, ServiceDefinition, FindingSeverity } from '@/types/service';
-import {
-  Pause,
-  Play,
-  X,
-  Activity,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Info,
-  ShieldAlert,
-  AlertOctagon,
-} from 'lucide-react';
+import { findResultForItem } from '@/types/service';
+import { Pause, Play, X, Activity, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronRight, Clock, Info, AlertOctagon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { commands } from '@/bindings';
 
 interface ServiceRunMonitorProps {
   reportId: string;
@@ -59,7 +46,7 @@ export function ServiceRunMonitor({
 
   // Load service definitions
   useEffect(() => {
-    invoke<ServiceDefinition[]>('get_service_definitions').then(defs => {
+    commands.getServiceDefinitions().then(defs => {
       const map = new Map<string, ServiceDefinition>();
       for (const d of defs) map.set(d.id, d);
       setDefinitions(map);
@@ -78,7 +65,7 @@ export function ServiceRunMonitor({
   useEffect(() => {
     const unlisteners: Promise<UnlistenFn>[] = [];
 
-    invoke<ServiceRunState>('get_service_run_state').then(s => setState(s)).catch(() => {});
+    commands.getServiceRunState().then(s => setState(s)).catch(() => {});
 
     unlisteners.push(
       listen<ServiceRunState>('service-state-changed', (event) => {
@@ -112,7 +99,6 @@ export function ServiceRunMonitor({
   const total = enabledQueue.length;
   const currentIndex = report?.currentServiceIndex ?? 0;
   const completedCount = report?.results.length ?? 0;
-  const currentServiceId = enabledQueue[currentIndex]?.serviceId;
   const progress = total > 0 ? (completedCount / total) * 100 : 0;
 
   const isComplete = report?.status === 'completed' || report?.status === 'failed' || report?.status === 'cancelled';
@@ -213,14 +199,14 @@ export function ServiceRunMonitor({
         {/* Service List */}
         <div className="max-h-48 overflow-y-auto mb-3 space-y-0.5">
           {enabledQueue.map((item, i) => {
-            const result = report?.results.find(r => r.serviceId === item.serviceId);
+            const result = findResultForItem(report?.results, item);
             const isCurrent = i === currentIndex && !isComplete;
             const name = definitions.get(item.serviceId)?.name ?? item.serviceId;
             const findingCount = result?.findings.length ?? 0;
 
             return (
               <div
-                key={item.serviceId}
+                key={item.id ?? `${item.serviceId}-${i}`}
                 className={cn(
                   'flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors',
                   isCurrent && 'bg-primary/5 border border-primary/20',

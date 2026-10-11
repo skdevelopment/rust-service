@@ -5,7 +5,7 @@
  * Shows disk performance metrics with bar chart comparison.
  */
 
-import { Gauge, Zap, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Zap, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Bar, BarChart, XAxis, YAxis, Cell, LabelList } from 'recharts';
 import {
   ChartContainer,

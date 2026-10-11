@@ -4,61 +4,21 @@
  * TypeScript interfaces for Windows Event Log viewing.
  */
 
+import type * as B from '@/bindings';
 /** Event log source/channel information */
-export interface EventLogSource {
-  name: string;
-  displayName: string;
-  recordsCount: number | null;
-  logType: string;
-}
+export type EventLogSource = B.EventLogSource;
 
 /** Event severity level */
-export type EventLevel = 
-  | 'critical'
-  | 'error'
-  | 'warning'
-  | 'information'
-  | 'verbose'
-  | 'unknown';
+export type EventLevel = B.EventLevel;
 
 /** Single event log entry */
-export interface EventLogEntry {
-  id: number;
-  recordId: number;
-  timeCreated: string;
-  level: EventLevel;
-  levelDisplay: string;
-  source: string;
-  providerName: string;
-  message: string;
-  taskCategory: string | null;
-  keywords: string[];
-  computer: string;
-  user: string | null;
-}
+export type EventLogEntry = B.EventLogEntry;
 
 /** Query filter for event logs */
-export interface EventLogFilter {
-  logName: string;
-  level?: string; // "Error", "Warning", "Information", "All"
-  startTime?: string; // ISO 8601 format
-  endTime?: string;
-  sourceFilter?: string;
-  keywordFilter?: string;
-  limit?: number;
-}
+export type EventLogFilter = B.EventLogFilter;
 
 /** Event log statistics */
-export interface EventLogStats {
-  logName: string;
-  errors24h: number;
-  warnings24h: number;
-  errors7d: number;
-  warnings7d: number;
-  errors30d: number;
-  warnings30d: number;
-  critical24h: number;
-}
+export type EventLogStats = B.EventLogStats;
 
 /** Get row color class based on event level */
 export function getLevelRowClass(level: EventLevel | string): string {
@@ -82,16 +42,6 @@ export function getLevelBadgeVariant(level: EventLevel | string): 'destructive' 
     return 'default';
   }
   return 'secondary';
-}
-
-/** Format event timestamp for display */
-export function formatEventTime(isoString: string): string {
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleString();
-  } catch {
-    return isoString;
-  }
 }
 
 /** Format event timestamp as relative time */

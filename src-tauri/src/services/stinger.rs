@@ -5,19 +5,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::{get_data_dir_path, get_program_exe_path};
-use crate::services::Service;
+use crate::commands::data_dir::get_data_dir_path;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, SelectOption, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
-    ServiceResult,
+    FindingSeverity, OptionType, SelectOption, ServiceDefinition, ServiceFinding,
+    ServiceOptionSchema, ServiceResult,
 };
 
 // =============================================================================
@@ -39,7 +36,7 @@ impl Service for StingerService {
                 ServiceOptionSchema {
                     id: "action".to_string(),
                     label: "Action on Threats".to_string(),
-                    option_type: "select".to_string(),
+                    option_type: OptionType::Select,
                     default_value: json!("report"),
                     min: None,
                     max: None,
@@ -58,7 +55,7 @@ impl Service for StingerService {
                 ServiceOptionSchema {
                     id: "include_pups".to_string(),
                     label: "Detect PUPs".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(false),
                     min: None,
                     max: None,
@@ -68,7 +65,7 @@ impl Service for StingerService {
                 ServiceOptionSchema {
                     id: "scan_path".to_string(),
                     label: "Scan Path (Optional)".to_string(),
-                    option_type: "string".to_string(),
+                    option_type: OptionType::String,
                     default_value: json!(""),
                     min: None,
                     max: None,
@@ -82,33 +79,15 @@ impl Service for StingerService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "stinger";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting Trellix Stinger antivirus scan...", &mut logs, app);
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting Trellix Stinger antivirus scan...");
 
         // Get Stinger executable path
         let exe_path = match get_program_exe_path("stinger".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: Stinger executable not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: Stinger executable not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Stinger Not Found".to_string(),
                     description: "Trellix Stinger executable was not found.".to_string(),
@@ -118,35 +97,15 @@ impl Service for StingerService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("Stinger executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("Stinger executable not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate Stinger: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate Stinger: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(&format!("Found Stinger at: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Found Stinger at: {}", exe_path));
 
         // Parse options
         let action = options
@@ -166,11 +125,7 @@ impl Service for StingerService {
         // Setup logs directory
         let logs_dir = get_data_dir_path().join("logs").join("Stinger");
         if let Err(e) = fs::create_dir_all(&logs_dir) {
-            emit_log(
-                &format!("Warning: Could not create logs directory: {}", e),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!("Warning: Could not create logs directory: {}", e));
         }
 
         // Build command arguments
@@ -192,41 +147,33 @@ impl Service for StingerService {
                     "--NOROOTKIT".to_string(),
                     "--NOWMI".to_string(),
                 ]);
-                emit_log(&format!("Scanning path: {}", scan_path), &mut logs, app);
+                ctx.log(format!("Scanning path: {}", scan_path));
             } else {
-                emit_log(
-                    &format!(
-                        "Warning: Scan path '{}' not found, using smart scan",
-                        scan_path
-                    ),
-                    &mut logs,
-                    app,
-                );
+                ctx.log(format!(
+                    "Warning: Scan path '{}' not found, using smart scan",
+                    scan_path
+                ));
             }
         } else {
-            emit_log("Using smart scan (common infection areas)", &mut logs, app);
+            ctx.log("Using smart scan (common infection areas)");
         }
 
         // Action on threats
         if action == "delete" {
             args.push("--DELETE".to_string());
-            emit_log("Mode: Delete threats", &mut logs, app);
+            ctx.log("Mode: Delete threats");
         } else {
             args.push("--REPORTONLY".to_string());
-            emit_log("Mode: Report only (no changes)", &mut logs, app);
+            ctx.log("Mode: Report only (no changes)");
         }
 
         // PUP detection
         if include_pups {
             args.push("--PROGRAM".to_string());
-            emit_log("PUP detection enabled", &mut logs, app);
+            ctx.log("PUP detection enabled");
         }
 
-        emit_log(
-            "Running scan (this may take several minutes)...",
-            &mut logs,
-            app,
-        );
+        ctx.log("Running scan (this may take several minutes)...");
 
         // Delete Stinger.opt to avoid conflicts with previous settings
         let stinger_dir = Path::new(&exe_path).parent().unwrap_or(Path::new("."));
@@ -236,19 +183,15 @@ impl Service for StingerService {
         }
 
         // Execute Stinger
-        let output = match Command::new(&exe_path)
-            .args(&args)
-            .current_dir(stinger_dir)
-            .output()
-        {
+        let output = match ctx.output(
+            crate::proc::command(&exe_path)
+                .args(&args)
+                .current_dir(stinger_dir),
+        ) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute Stinger: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute Stinger: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run Stinger: {}", e),
@@ -258,55 +201,35 @@ impl Service for StingerService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
-        let _stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let _stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("Stinger completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Stinger completed with exit code: {}", exit_code));
 
         // Find and parse the log file
         let log_file = find_latest_stinger_log(&logs_dir);
         let parsed = if let Some(ref log_path) = log_file {
-            emit_log(
-                &format!("Parsing log: {}", log_path.display()),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!("Parsing log: {}", log_path.display()));
             parse_stinger_log(log_path)
         } else {
-            emit_log("Warning: No log file found", &mut logs, app);
+            ctx.log("Warning: No log file found");
             StingerParsedOutput::default()
         };
 
         // Log summary
         if let Some(total) = parsed.total_files {
-            emit_log(&format!("Files scanned: {}", total), &mut logs, app);
+            ctx.log(format!("Files scanned: {}", total));
         }
         let infection_count = parsed.infections.len();
         if infection_count > 0 {
-            emit_log(
-                &format!("Infections found: {}", infection_count),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!("Infections found: {}", infection_count));
         } else {
-            emit_log("No infections detected", &mut logs, app);
+            ctx.log("No infections detected");
         }
 
         // Determine status and create findings
@@ -350,7 +273,7 @@ impl Service for StingerService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: severity.clone(),
             title,
             description,
@@ -384,7 +307,7 @@ impl Service for StingerService {
 
         // Add individual infection findings
         for infection in &parsed.infections {
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity: if action == "delete" {
                     FindingSeverity::Warning
                 } else {
@@ -404,20 +327,15 @@ impl Service for StingerService {
 
         // Log stderr if present
         if !stderr.is_empty() && stderr.len() < 500 {
-            emit_log(&format!("Stderr: {}", stderr.trim()), &mut logs, app);
+            ctx.log(format!("Stderr: {}", stderr.trim()));
         }
 
-        emit_log("Stinger scan complete", &mut logs, app);
+        ctx.log("Stinger scan complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0 || (log_file.is_some() && infection_count == 0),
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(
+            exit_code == 0 || (log_file.is_some() && infection_count == 0),
+            None,
+        )
     }
 }
 
@@ -454,7 +372,7 @@ fn find_latest_stinger_log(dir: &Path) -> Option<PathBuf> {
 // Output Parsing
 // =============================================================================
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, specta::Type)]
 struct StingerInfection {
     file_path: String,
     md5: String,

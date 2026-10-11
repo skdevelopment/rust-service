@@ -4,14 +4,13 @@
 //! DNS lookup, and WiFi signal information.
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /// Detailed network interface information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkInterfaceDetails {
     pub name: String,
@@ -27,7 +26,7 @@ pub struct NetworkInterfaceDetails {
 }
 
 /// Ping result for a single host
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PingResult {
     pub host: String,
@@ -43,7 +42,7 @@ pub struct PingResult {
 }
 
 /// Individual ping reply
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PingReply {
     pub seq: u32,
@@ -53,7 +52,7 @@ pub struct PingReply {
 }
 
 /// Traceroute result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TracerouteResult {
     pub host: String,
@@ -64,7 +63,7 @@ pub struct TracerouteResult {
 }
 
 /// Single hop in a traceroute
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TracerouteHop {
     pub hop_number: u32,
@@ -77,7 +76,7 @@ pub struct TracerouteHop {
 }
 
 /// DNS lookup result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DnsLookupResult {
     pub query: String,
@@ -89,7 +88,7 @@ pub struct DnsLookupResult {
 }
 
 /// DNS record
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DnsRecord {
     pub record_type: String,
@@ -98,7 +97,7 @@ pub struct DnsRecord {
 }
 
 /// WiFi information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WifiInfo {
     pub connected: bool,
@@ -120,9 +119,14 @@ pub struct WifiInfo {
 
 /// Get detailed information about all network interfaces
 #[tauri::command]
+#[specta::specta]
 pub async fn get_detailed_network_info() -> Result<Vec<NetworkInterfaceDetails>, String> {
+    crate::proc::blocking(get_detailed_network_info_blocking).await
+}
+
+fn get_detailed_network_info_blocking() -> Result<Vec<NetworkInterfaceDetails>, String> {
     // Use PowerShell to get detailed network adapter info
-    let output = Command::new("powershell")
+    let output = crate::proc::output_with_timeout(crate::proc::command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -147,16 +151,15 @@ pub async fn get_detailed_network_info() -> Result<Vec<NetworkInterfaceDetails>,
                 }
             } | ConvertTo-Json -Depth 3
             "#,
-        ])
-        .output()
+        ]), crate::proc::QUERY_TIMEOUT)
         .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::proc::decode_output(&output.stderr);
         return Err(format!("PowerShell error: {}", stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     // Handle empty output
     if stdout.trim().is_empty() {
@@ -218,13 +221,18 @@ pub async fn get_detailed_network_info() -> Result<Vec<NetworkInterfaceDetails>,
 
 /// Ping a host and return detailed results
 #[tauri::command]
+#[specta::specta]
 pub async fn ping_host(host: String, count: u32) -> PingResult {
+    crate::proc::blocking(move || ping_host_blocking(host, count)).await
+}
+
+fn ping_host_blocking(host: String, count: u32) -> PingResult {
     let count = count.clamp(1, 20); // Limit between 1-20
 
-    let output = match Command::new("ping")
-        .args(["-n", &count.to_string(), &host])
-        .output()
-    {
+    let output = match crate::proc::output_with_timeout(
+        crate::proc::command("ping").args(["-n", &count.to_string(), &host]),
+        crate::proc::QUERY_TIMEOUT,
+    ) {
         Ok(o) => o,
         Err(e) => {
             return PingResult {
@@ -242,165 +250,132 @@ pub async fn ping_host(host: String, count: u32) -> PingResult {
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
     parse_ping_output(&host, &stdout, count)
 }
 
-/// Parse Windows ping output
-fn parse_ping_output(host: &str, output: &str, count: u32) -> PingResult {
-    let mut result = PingResult {
-        host: host.to_string(),
-        resolved_ip: None,
-        packets_sent: count,
-        packets_received: 0,
-        packet_loss_percent: 100.0,
-        min_ms: None,
-        max_ms: None,
-        avg_ms: None,
-        replies: Vec::new(),
-        error: None,
-    };
+/// Parse Windows `ping` output without relying on its (localized) wording.
+///
+/// Reply lines are recognized by `TTL=`, which every language keeps; times by
+/// `=Nms` / `<1ms`. Statistics are computed from the replies instead of being
+/// read from the localized summary lines.
+pub(crate) fn parse_ping_output(host: &str, output: &str, count: u32) -> PingResult {
+    let time_re = regex::Regex::new(r"([=<])\s*(\d+(?:[.,]\d+)?)\s*ms").expect("valid regex");
+    let ttl_re = regex::Regex::new(r"(?i)TTL=(\d+)").expect("valid regex");
+    let ip_re = regex::Regex::new(r"\[([0-9a-fA-F:.%]+)\]").expect("valid regex");
 
-    let lines: Vec<&str> = output.lines().collect();
-    let mut seq = 0;
+    let mut lines = output.lines().map(str::trim).filter(|l| !l.is_empty());
+    let header = lines.next().unwrap_or("");
+    let resolved_ip = ip_re.captures(header).map(|c| c[1].to_string());
 
-    for line in &lines {
-        // Extract resolved IP from "Pinging host [IP]" line
-        if line.contains("Pinging") && line.contains('[') {
-            if let Some(start) = line.find('[') {
-                if let Some(end) = line.find(']') {
-                    result.resolved_ip = Some(line[start + 1..end].to_string());
+    let mut replies = Vec::new();
+    for (i, line) in lines.take(count as usize).enumerate() {
+        let seq = i as u32 + 1;
+        if let Some(ttl) = ttl_re.captures(line) {
+            let time_ms = time_re.captures(line).and_then(|c| {
+                if &c[1] == "<" {
+                    Some(0.5)
+                } else {
+                    c[2].replace(',', ".").parse::<f32>().ok()
                 }
-            }
-        }
-
-        // Parse individual replies
-        if line.contains("Reply from") {
-            seq += 1;
-            let mut reply = PingReply {
+            });
+            replies.push(PingReply {
                 seq,
-                ttl: None,
-                time_ms: None,
+                ttl: ttl[1].parse().ok(),
+                time_ms,
                 status: "Success".to_string(),
+            });
+        } else {
+            let lower = line.to_lowercase();
+            let status = if lower.contains("unreachable") {
+                "Unreachable"
+            } else if lower.contains("timed out") {
+                "Timeout"
+            } else {
+                "Failed"
             };
-
-            // Extract time
-            if let Some(time_start) = line.find("time=") {
-                let time_str = &line[time_start + 5..];
-                if let Some(ms_end) = time_str.find("ms") {
-                    if let Ok(time) = time_str[..ms_end].trim().parse::<f32>() {
-                        reply.time_ms = Some(time);
-                    }
-                }
-            } else if line.contains("time<1ms") {
-                reply.time_ms = Some(0.5);
-            }
-
-            // Extract TTL
-            if let Some(ttl_start) = line.find("TTL=") {
-                let ttl_str = &line[ttl_start + 4..];
-                if let Some(end) = ttl_str.find(|c: char| !c.is_ascii_digit()) {
-                    if let Ok(ttl) = ttl_str[..end].parse::<u32>() {
-                        reply.ttl = Some(ttl);
-                    }
-                } else if let Ok(ttl) = ttl_str.trim().parse::<u32>() {
-                    reply.ttl = Some(ttl);
-                }
-            }
-
-            result.replies.push(reply);
-        } else if line.contains("Request timed out") {
-            seq += 1;
-            result.replies.push(PingReply {
+            replies.push(PingReply {
                 seq,
                 ttl: None,
                 time_ms: None,
-                status: "Timeout".to_string(),
+                status: status.to_string(),
             });
-        } else if line.contains("Destination host unreachable") {
-            seq += 1;
-            result.replies.push(PingReply {
-                seq,
-                ttl: None,
-                time_ms: None,
-                status: "Unreachable".to_string(),
-            });
-        }
-
-        // Parse statistics
-        if line.contains("Packets:") {
-            // "Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)"
-            if let Some(sent_start) = line.find("Sent = ") {
-                let after_sent = &line[sent_start + 7..];
-                if let Some(comma) = after_sent.find(',') {
-                    if let Ok(sent) = after_sent[..comma].parse::<u32>() {
-                        result.packets_sent = sent;
-                    }
-                }
-            }
-            if let Some(recv_start) = line.find("Received = ") {
-                let after_recv = &line[recv_start + 11..];
-                if let Some(comma) = after_recv.find(',') {
-                    if let Ok(recv) = after_recv[..comma].parse::<u32>() {
-                        result.packets_received = recv;
-                    }
-                }
-            }
-            if let Some(loss_start) = line.find('(') {
-                if let Some(loss_end) = line.find('%') {
-                    if let Ok(loss) = line[loss_start + 1..loss_end].parse::<f32>() {
-                        result.packet_loss_percent = loss;
-                    }
-                }
-            }
-        }
-
-        // Parse timing statistics
-        if line.contains("Minimum = ") {
-            // "Minimum = 1ms, Maximum = 10ms, Average = 5ms"
-            if let Some(min_start) = line.find("Minimum = ") {
-                let after_min = &line[min_start + 10..];
-                if let Some(ms) = after_min.find("ms") {
-                    if let Ok(min) = after_min[..ms].parse::<f32>() {
-                        result.min_ms = Some(min);
-                    }
-                }
-            }
-            if let Some(max_start) = line.find("Maximum = ") {
-                let after_max = &line[max_start + 10..];
-                if let Some(ms) = after_max.find("ms") {
-                    if let Ok(max) = after_max[..ms].parse::<f32>() {
-                        result.max_ms = Some(max);
-                    }
-                }
-            }
-            if let Some(avg_start) = line.find("Average = ") {
-                let after_avg = &line[avg_start + 10..];
-                if let Some(ms) = after_avg.find("ms") {
-                    if let Ok(avg) = after_avg[..ms].parse::<f32>() {
-                        result.avg_ms = Some(avg);
-                    }
-                }
-            }
         }
     }
 
-    // Check for complete failure
-    if output.contains("could not find host") || output.contains("Ping request could not find host")
-    {
-        result.error = Some("Could not resolve hostname".to_string());
+    let times: Vec<f32> = replies.iter().filter_map(|r| r.time_ms).collect();
+    let received = replies.iter().filter(|r| r.ttl.is_some()).count() as u32;
+    let error = (received == 0 && resolved_ip.is_none() && replies.is_empty()).then(|| {
+        if header.is_empty() {
+            "No output from ping".to_string()
+        } else {
+            header.to_string()
+        }
+    });
+
+    PingResult {
+        host: host.to_string(),
+        resolved_ip,
+        packets_sent: count,
+        packets_received: received,
+        packet_loss_percent: if count == 0 {
+            100.0
+        } else {
+            (count - received.min(count)) as f32 * 100.0 / count as f32
+        },
+        min_ms: times.iter().copied().reduce(f32::min),
+        max_ms: times.iter().copied().reduce(f32::max),
+        avg_ms: (!times.is_empty()).then(|| times.iter().sum::<f32>() / times.len() as f32),
+        replies,
+        error,
+    }
+}
+
+#[cfg(test)]
+mod ping_tests {
+    use super::parse_ping_output;
+
+    #[test]
+    fn parses_english_output() {
+        let out = "\r\nPinging dns.google [8.8.8.8] with 32 bytes of data:\r\nReply from 8.8.8.8: bytes=32 time=12ms TTL=117\r\nReply from 8.8.8.8: bytes=32 time<1ms TTL=117\r\nRequest timed out.\r\nReply from 8.8.8.8: bytes=32 time=14ms TTL=117\r\n\r\nPing statistics for 8.8.8.8:\r\n    Packets: Sent = 4, Received = 3, Lost = 1 (25% loss),\r\n";
+        let r = parse_ping_output("dns.google", out, 4);
+        assert_eq!(r.resolved_ip.as_deref(), Some("8.8.8.8"));
+        assert_eq!(r.packets_received, 3);
+        assert_eq!(r.packet_loss_percent, 25.0);
+        assert_eq!(r.replies[2].status, "Timeout");
+        assert_eq!(r.min_ms, Some(0.5));
+        assert_eq!(r.max_ms, Some(14.0));
     }
 
-    result
+    #[test]
+    fn parses_german_output() {
+        let out = "\r\nPing wird ausgeführt für 8.8.8.8 mit 32 Bytes Daten:\r\nAntwort von 8.8.8.8: Bytes=32 Zeit=20ms TTL=117\r\nAntwort von 8.8.8.8: Bytes=32 Zeit=22ms TTL=117\r\n\r\nPing-Statistik für 8.8.8.8:\r\n";
+        let r = parse_ping_output("8.8.8.8", out, 2);
+        assert_eq!(r.packets_received, 2);
+        assert_eq!(r.packet_loss_percent, 0.0);
+        assert_eq!(r.avg_ms, Some(21.0));
+    }
+
+    #[test]
+    fn reports_unresolvable_host() {
+        let r = parse_ping_output("nope.invalid", "Ping request could not find host nope.invalid. Please check the name and try again.\r\n", 4);
+        assert_eq!(r.packets_received, 0);
+        assert!(r.error.is_some());
+    }
 }
 
 /// Perform a traceroute to a host
 #[tauri::command]
+#[specta::specta]
 pub async fn trace_route(host: String) -> TracerouteResult {
-    let output = match Command::new("tracert")
-        .args(["-d", "-w", "1000", "-h", "30", &host])
-        .output()
-    {
+    crate::proc::blocking(move || trace_route_blocking(host)).await
+}
+
+fn trace_route_blocking(host: String) -> TracerouteResult {
+    let output = match crate::proc::output_with_timeout(
+        crate::proc::command("tracert").args(["-d", "-w", "1000", "-h", "30", &host]),
+        std::time::Duration::from_secs(6 * 60),
+    ) {
         Ok(o) => o,
         Err(e) => {
             return TracerouteResult {
@@ -413,7 +388,7 @@ pub async fn trace_route(host: String) -> TracerouteResult {
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
     parse_traceroute_output(&host, &stdout)
 }
 
@@ -510,14 +485,19 @@ fn parse_traceroute_output(host: &str, output: &str) -> TracerouteResult {
 
 /// Perform DNS lookup
 #[tauri::command]
+#[specta::specta]
 pub async fn dns_lookup(domain: String, record_type: Option<String>) -> DnsLookupResult {
+    crate::proc::blocking(move || dns_lookup_blocking(domain, record_type)).await
+}
+
+fn dns_lookup_blocking(domain: String, record_type: Option<String>) -> DnsLookupResult {
     let query_type = record_type.unwrap_or_else(|| "A".to_string());
     let start = std::time::Instant::now();
 
-    let output = match Command::new("nslookup")
-        .args(["-type=".to_owned() + &query_type, domain.clone()])
-        .output()
-    {
+    let output = match crate::proc::output_with_timeout(
+        crate::proc::command("nslookup").args(["-type=".to_owned() + &query_type, domain.clone()]),
+        crate::proc::QUERY_TIMEOUT,
+    ) {
         Ok(o) => o,
         Err(e) => {
             return DnsLookupResult {
@@ -532,7 +512,7 @@ pub async fn dns_lookup(domain: String, record_type: Option<String>) -> DnsLooku
     };
 
     let elapsed = start.elapsed().as_millis() as u64;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
     parse_nslookup_output(&domain, &query_type, &stdout, elapsed)
 }
 
@@ -569,26 +549,28 @@ fn parse_nslookup_output(
 
         // Parse addresses
         if in_answer_section
-            && (trimmed.starts_with("Address:") || trimmed.starts_with("Addresses:")) {
-                let addr_part = trimmed.strip_prefix("Addresses:")
-                    .or_else(|| trimmed.strip_prefix("Address:"))
-                    .unwrap_or("");
+            && (trimmed.starts_with("Address:") || trimmed.starts_with("Addresses:"))
+        {
+            let addr_part = trimmed
+                .strip_prefix("Addresses:")
+                .or_else(|| trimmed.strip_prefix("Address:"))
+                .unwrap_or("");
 
-                for addr in addr_part.split(',') {
-                    let addr = addr.trim();
-                    if !addr.is_empty() && !addr.contains('#') {
-                        result.answers.push(DnsRecord {
-                            record_type: if addr.contains(':') {
-                                "AAAA".to_string()
-                            } else {
-                                "A".to_string()
-                            },
-                            value: addr.to_string(),
-                            ttl: None,
-                        });
-                    }
+            for addr in addr_part.split(',') {
+                let addr = addr.trim();
+                if !addr.is_empty() && !addr.contains('#') {
+                    result.answers.push(DnsRecord {
+                        record_type: if addr.contains(':') {
+                            "AAAA".to_string()
+                        } else {
+                            "A".to_string()
+                        },
+                        value: addr.to_string(),
+                        ttl: None,
+                    });
                 }
             }
+        }
     }
 
     // Check for errors
@@ -603,11 +585,16 @@ fn parse_nslookup_output(
 
 /// Get WiFi connection information
 #[tauri::command]
+#[specta::specta]
 pub async fn get_wifi_info() -> WifiInfo {
-    let output = match Command::new("netsh")
-        .args(["wlan", "show", "interfaces"])
-        .output()
-    {
+    crate::proc::blocking(get_wifi_info_blocking).await
+}
+
+fn get_wifi_info_blocking() -> WifiInfo {
+    let output = match crate::proc::output_with_timeout(
+        crate::proc::command("netsh").args(["wlan", "show", "interfaces"]),
+        crate::proc::QUERY_TIMEOUT,
+    ) {
         Ok(o) => o,
         Err(e) => {
             return WifiInfo {
@@ -626,7 +613,7 @@ pub async fn get_wifi_info() -> WifiInfo {
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
     parse_wifi_output(&stdout)
 }
 

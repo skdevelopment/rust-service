@@ -7,7 +7,6 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   FileText,
   Search,
@@ -51,6 +50,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ServiceReport, ServiceRunStatus, ServiceDefinition } from '@/types/service';
 import { ServiceReportView } from '@/components/service-report-view';
 import { useSettings } from '@/components/settings-context';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Types
@@ -88,7 +88,7 @@ function formatTime(isoString: string): string {
   });
 }
 
-function formatDuration(ms?: number): string {
+function formatDuration(ms?: number | null): string {
   if (!ms) return '—';
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -292,8 +292,8 @@ export function ReportsPage() {
     async function loadData() {
       try {
         const [reportsList, defsList] = await Promise.all([
-          invoke<ServiceReport[]>('list_service_reports'),
-          invoke<ServiceDefinition[]>('get_service_definitions'),
+          commands.listServiceReports(),
+          commands.getServiceDefinitions(),
         ]);
         setReports(reportsList);
         setDefinitions(defsList);
@@ -349,7 +349,7 @@ export function ReportsPage() {
     if (!reportToDelete) return;
 
     try {
-      await invoke('delete_report', { reportId: reportToDelete });
+      await commands.deleteReport(reportToDelete);
       setReports(prev => prev.filter(r => r.id !== reportToDelete));
       if (selectedReport?.id === reportToDelete) {
         setSelectedReport(null);

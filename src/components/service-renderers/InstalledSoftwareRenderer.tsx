@@ -7,7 +7,6 @@
 
 import { useState } from 'react';
 import { PackageSearch, Search, ArrowUpDown } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ServiceCardWrapper } from './ServiceCardWrapper';

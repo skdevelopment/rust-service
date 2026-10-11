@@ -4,18 +4,15 @@
 //! and registry entries. Parses console output to extract removal counts.
 
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -37,7 +34,7 @@ impl Service for DriveCleanupService {
             options: vec![ServiceOptionSchema {
                 id: "test_only".to_string(),
                 label: "Test Only (don't remove)".to_string(),
-                option_type: "boolean".to_string(),
+                option_type: OptionType::Boolean,
                 default_value: json!(false),
                 min: None,
                 max: None,
@@ -52,46 +49,24 @@ impl Service for DriveCleanupService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "drivecleanup";
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // Parse options
         let test_only = options
             .get("test_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting DriveCleanup...", &mut logs, app);
+        ctx.log("Starting DriveCleanup...");
         if test_only {
-            emit_log(
-                "Running in TEST mode - no changes will be made",
-                &mut logs,
-                app,
-            );
+            ctx.log("Running in TEST mode - no changes will be made");
         }
 
         // Get executable path
         let exe_path = match get_program_exe_path("drivecleanup".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: DriveCleanup.exe not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: DriveCleanup.exe not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "DriveCleanup Not Found".to_string(),
                     description: "DriveCleanup executable was not found.".to_string(),
@@ -101,39 +76,15 @@ impl Service for DriveCleanupService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("DriveCleanup.exe not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("DriveCleanup.exe not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate DriveCleanup: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate DriveCleanup: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(
-            &format!("Found DriveCleanup at: {}", exe_path),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Found DriveCleanup at: {}", exe_path));
 
         // Build command arguments
         let mut args: Vec<&str> = Vec::new();
@@ -148,22 +99,18 @@ impl Service for DriveCleanupService {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        emit_log("Running DriveCleanup...", &mut logs, app);
+        ctx.log("Running DriveCleanup...");
 
         // Execute DriveCleanup
-        let output = match Command::new(&exe_path)
-            .args(&args)
-            .current_dir(&working_dir)
-            .output()
-        {
+        let output = match ctx.output(
+            crate::proc::command(&exe_path)
+                .args(&args)
+                .current_dir(&working_dir),
+        ) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute DriveCleanup: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute DriveCleanup: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run DriveCleanup: {}", e),
@@ -172,54 +119,38 @@ impl Service for DriveCleanupService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("DriveCleanup completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "DriveCleanup completed with exit code: {}",
+            exit_code
+        ));
 
         // Parse output
         let parsed = parse_drivecleanup_output(&stdout);
 
         // Log parsed results
-        emit_log(
-            &format!("USB devices removed: {}", parsed.usb_devices.unwrap_or(0)),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            &format!("USB hubs removed: {}", parsed.usb_hubs.unwrap_or(0)),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            &format!("Disk devices removed: {}", parsed.disk_devices.unwrap_or(0)),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            &format!(
-                "Registry items removed: {}",
-                parsed.registry_items.unwrap_or(0)
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "USB devices removed: {}",
+            parsed.usb_devices.unwrap_or(0)
+        ));
+        ctx.log(format!(
+            "USB hubs removed: {}",
+            parsed.usb_hubs.unwrap_or(0)
+        ));
+        ctx.log(format!(
+            "Disk devices removed: {}",
+            parsed.disk_devices.unwrap_or(0)
+        ));
+        ctx.log(format!(
+            "Registry items removed: {}",
+            parsed.registry_items.unwrap_or(0)
+        ));
 
         // Calculate total removed
         let total_removed = parsed.usb_devices.unwrap_or(0)
@@ -246,7 +177,7 @@ impl Service for DriveCleanupService {
         };
 
         // Main finding
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title: status,
             description: format!(
@@ -279,17 +210,9 @@ impl Service for DriveCleanupService {
             })),
         });
 
-        emit_log("DriveCleanup complete", &mut logs, app);
+        ctx.log("DriveCleanup complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(exit_code == 0, None)
     }
 }
 

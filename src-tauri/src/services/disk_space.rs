@@ -2,14 +2,10 @@
 //!
 //! Analyzes disk space usage for all drives on the system.
 
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
 use sysinfo::Disks;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -34,26 +30,8 @@ impl Service for DiskSpaceService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "disk-space";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting disk space analysis...", &mut logs, app);
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting disk space analysis...");
 
         let disks = Disks::new_with_refreshed_list();
         let mut drives_data: Vec<serde_json::Value> = Vec::new();
@@ -74,17 +52,13 @@ impl Service for DiskSpaceService {
             let fs_type = disk.file_system().to_string_lossy().to_string();
             let disk_kind = format!("{:?}", disk.kind());
 
-            emit_log(
-                &format!(
-                    "Drive {}: {:.1} GB used of {:.1} GB ({}%)",
-                    mount_point,
-                    used_bytes as f64 / 1_073_741_824.0,
-                    total_bytes as f64 / 1_073_741_824.0,
-                    usage_percent
-                ),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!(
+                "Drive {}: {:.1} GB used of {:.1} GB ({}%)",
+                mount_point,
+                used_bytes as f64 / 1_073_741_824.0,
+                total_bytes as f64 / 1_073_741_824.0,
+                usage_percent
+            ));
 
             // Determine severity based on usage
             let severity = if usage_percent >= 95 {
@@ -121,7 +95,7 @@ impl Service for DiskSpaceService {
                 "status": status,
             }));
 
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity,
                 title: format!("Drive {} - {}% Used", mount_point, usage_percent),
                 description: format!(
@@ -155,7 +129,7 @@ impl Service for DiskSpaceService {
             FindingSeverity::Success
         };
 
-        findings.insert(
+        ctx.findings.insert(
             0,
             ServiceFinding {
                 severity: overall_severity,
@@ -173,16 +147,8 @@ impl Service for DiskSpaceService {
             },
         );
 
-        emit_log("Disk space analysis complete", &mut logs, app);
+        ctx.log("Disk space analysis complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }

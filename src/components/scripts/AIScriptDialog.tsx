@@ -4,7 +4,7 @@
  * Dialog for generating scripts via AI.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   AlertCircle,
   Loader2,
@@ -58,8 +58,7 @@ export function AIScriptDialog({
   const [scriptType, setScriptType] = useState<ScriptType>('powershell');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [abortController, setAbortController] =
-    useState<AbortController | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -67,7 +66,7 @@ export function AIScriptDialog({
       setError(null);
       setIsGenerating(false);
     } else {
-      abortController?.abort();
+      abortRef.current?.abort();
     }
   }, [open]);
 
@@ -80,7 +79,7 @@ export function AIScriptDialog({
     setError(null);
 
     const controller = new AbortController();
-    setAbortController(controller);
+    abortRef.current = controller;
 
     try {
       const result = await aiGenerateScript(
@@ -103,7 +102,7 @@ export function AIScriptDialog({
       }
     } finally {
       setIsGenerating(false);
-      setAbortController(null);
+      abortRef.current = null;
     }
   };
 

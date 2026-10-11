@@ -1,0 +1,144 @@
+/* =============================================================================
+   AutoService Theme (homage to original AutoService)
+   Apply with: .theme-autoservice on <html>
+   ============================================================================= */
+
+.theme-autoservice {
+  color-scheme: dark;
+  --background: #0f1115;
+  --foreground: #e6eaf2;
+  --card: #1f2430;
+  --card-foreground: #e6eaf2;
+  --popover: #1f2430;
+  --popover-foreground: #e6eaf2;
+  --primary: #4f8cff;
+  --primary-foreground: #ffffff;
+  --secondary: #202636;
+  --secondary-foreground: #e6eaf2;
+  --muted: #171a21;
+  --muted-foreground: #a3adbf;
+  --accent: #263043;
+  --accent-foreground: #e6eaf2;
+  --destructive: #c94442;
+  --destructive-foreground: #ffffff;
+  --border: #2e384f;
+  --input: #1b2130;
+  --ring: #335d9b;
+  --chart-1: #4f8cff;
+  --chart-2: #3d6fd1;
+  --chart-3: #a3adbf;
+  --chart-4: #263043;
+  --chart-5: #171a21;
+  --sidebar: #171a21;
+  --sidebar-foreground: #e6eaf2;
+  --sidebar-primary: #4f8cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #202636;
+  --sidebar-accent-foreground: #e6eaf2;
+  --sidebar-border: #2e384f;
+  --sidebar-ring: #335d9b;
+  --radius: 0.625rem;
+}
+
+.theme-autoservice.dark {
+  color-scheme: dark;
+  --background: #0f1115;
+  --foreground: #e6eaf2;
+  --card: #1f2430;
+  --card-foreground: #e6eaf2;
+  --popover: #1f2430;
+  --popover-foreground: #e6eaf2;
+  --primary: #4f8cff;
+  --primary-foreground: #ffffff;
+  --secondary: #202636;
+  --secondary-foreground: #e6eaf2;
+  --muted: #171a21;
+  --muted-foreground: #a3adbf;
+  --accent: #263043;
+  --accent-foreground: #e6eaf2;
+  --destructive: #c94442;
+  --destructive-foreground: #ffffff;
+  --border: #2e384f;
+  --input: #1b2130;
+  --ring: #335d9b;
+  --chart-1: #4f8cff;
+  --chart-2: #3d6fd1;
+  --chart-3: #a3adbf;
+  --chart-4: #263043;
+  --chart-5: #171a21;
+  --sidebar: #171a21;
+  --sidebar-foreground: #e6eaf2;
+  --sidebar-primary: #4f8cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #202636;
+  --sidebar-accent-foreground: #e6eaf2;
+  --sidebar-border: #2e384f;
+  --sidebar-ring: #335d9b;
+}
+
+/* =============================================================================
+   AutoService chrome tweaks
+   (Scoped overrides to better match the original AutoService UI)
+   ============================================================================= */
+
+.theme-autoservice .titlebar {
+  height: 34px;
+  background: linear-gradient(90deg, #141923, #1b2230);
+  padding: 0 6px 0 10px;
+  gap: 8px;
+}
+
+.theme-autoservice .titlebar-drag-region {
+  padding-left: 0;
+}
+
+.theme-autoservice .titlebar-title {
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--muted-foreground);
+}
+
+.theme-autoservice .titlebar-controls {
+  padding-right: 0;
+  gap: 0;
+}
+
+.theme-autoservice .titlebar-button {
+  width: 38px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+}
+
+.theme-autoservice .titlebar-button:hover {
+  background-color: #243048;
+  color: var(--foreground);
+}
+
+.theme-autoservice .titlebar-button-close:hover {
+  background-color: #5b2b2b;
+  color: #ffdddd;
+}
+
+.theme-autoservice [role='tablist'] {
+  background: #171a21;
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-autoservice [role='tab'] {
+  color: var(--muted-foreground);
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.theme-autoservice [role='tab']:hover {
+  color: var(--foreground);
+  background: #1f2430;
+}
+
+.theme-autoservice [role='tab'][data-state='active'] {
+  color: var(--foreground);
+  background: #21304a;
+  border-color: #2b416b;
+  box-shadow: none;
+}

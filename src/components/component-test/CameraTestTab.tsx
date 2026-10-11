@@ -23,6 +23,14 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
+/** Chromium-only video element extras used for frame statistics */
+type VideoWithFrameStats = HTMLVideoElement & {
+  webkitDecodedFrameCount?: number;
+  webkitDroppedFrameCount?: number;
+  requestVideoFrameCallback?: (cb: () => void) => number;
+  cancelVideoFrameCallback?: (id: number) => void;
+};
+
 export function CameraTestTab() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -73,10 +81,10 @@ export function CameraTestTab() {
         const allDevices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
         setDevices(videoDevices);
-        if (videoDevices.length > 0 && !selectedDevice) {
-          setSelectedDevice(videoDevices[0].deviceId);
+        if (videoDevices.length > 0) {
+          setSelectedDevice(prev => prev || videoDevices[0].deviceId);
         }
-      } catch (err) {
+      } catch {
         setError('Camera permission denied or not available');
       }
     }
@@ -110,7 +118,7 @@ export function CameraTestTab() {
       }
       setStream(mediaStream);
       setIsActive(true);
-    } catch (err) {
+    } catch {
       setError('Failed to access camera');
     }
   }, [isActive, stream, selectedDevice]);
@@ -139,7 +147,8 @@ export function CameraTestTab() {
     if (stream) {
       const track = stream.getVideoTracks()[0];
       if (track) {
-        const settings = track.getSettings() as any;
+        // Some fields (resizeMode, colorSpace) are not in the DOM typings yet
+        const settings = track.getSettings() as MediaTrackSettings & { resizeMode?: string; colorSpace?: unknown };
         setVideoInfo({
           width: settings.width,
           height: settings.height,
@@ -203,23 +212,23 @@ export function CameraTestTab() {
             height: video.videoHeight,
             readyState: video.readyState,
             networkState: video.networkState,
-            decodedFrames: (video as any).webkitDecodedFrameCount,
-            droppedFrames: (video as any).webkitDroppedFrameCount
+            decodedFrames: (video as VideoWithFrameStats).webkitDecodedFrameCount,
+            droppedFrames: (video as VideoWithFrameStats).webkitDroppedFrameCount
           });
         }
       }
       if ('requestVideoFrameCallback' in video) {
-        callbackId = (video as any).requestVideoFrameCallback(onFrame);
+        callbackId = (video as VideoWithFrameStats).requestVideoFrameCallback?.(onFrame);
       }
     };
 
     if ('requestVideoFrameCallback' in video) {
-      callbackId = (video as any).requestVideoFrameCallback(onFrame);
+      callbackId = (video as VideoWithFrameStats).requestVideoFrameCallback?.(onFrame);
     }
 
     return () => {
       if (callbackId && 'cancelVideoFrameCallback' in video) {
-        (video as any).cancelVideoFrameCallback(callbackId);
+        (video as VideoWithFrameStats).cancelVideoFrameCallback?.(callbackId);
       }
     };
   }, [isActive]);

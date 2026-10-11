@@ -1,0 +1,75 @@
+/* =============================================================================
+   Forge Theme (Warm ember/copper on charcoal — industrial workshop)
+   Apply with: .theme-forge on <html>
+   ============================================================================= */
+
+.theme-forge {
+  --background: #faf6f3;
+  --foreground: #1a1614;
+  --card: #ffffff;
+  --card-foreground: #1a1614;
+  --popover: #ffffff;
+  --popover-foreground: #1a1614;
+  --primary: #d97a2b;
+  --primary-foreground: #faf6f3;
+  --secondary: #f0e8e0;
+  --secondary-foreground: #1a1614;
+  --muted: #f0e8e0;
+  --muted-foreground: #7a6e62;
+  --accent: #e8ddd2;
+  --accent-foreground: #1a1614;
+  --destructive: #c44040;
+  --destructive-foreground: #ffffff;
+  --border: #ddd2c4;
+  --input: #e8ddd2;
+  --ring: #d97a2b;
+  --chart-1: #d97a2b;
+  --chart-2: #5da65d;
+  --chart-3: #d4a033;
+  --chart-4: #c44040;
+  --chart-5: #8a6ec4;
+  --sidebar: #f0e8e0;
+  --sidebar-foreground: #1a1614;
+  --sidebar-primary: #d97a2b;
+  --sidebar-primary-foreground: #faf6f3;
+  --sidebar-accent: #e8ddd2;
+  --sidebar-accent-foreground: #1a1614;
+  --sidebar-border: #ddd2c4;
+  --sidebar-ring: #d97a2b;
+  --radius: 0.625rem;
+}
+
+.theme-forge.dark {
+  --background: #1a1614;
+  --foreground: #f5ede8;
+  --card: #221e1b;
+  --card-foreground: #f5ede8;
+  --popover: #221e1b;
+  --popover-foreground: #f5ede8;
+  --primary: #d97a2b;
+  --primary-foreground: #1a1210;
+  --secondary: #332d28;
+  --secondary-foreground: #f5ede8;
+  --muted: #1e1a17;
+  --muted-foreground: #9c8e82;
+  --accent: #332d28;
+  --accent-foreground: #f5ede8;
+  --destructive: #c44040;
+  --destructive-foreground: #ffffff;
+  --border: #332d28;
+  --input: #332d28;
+  --ring: #d97a2b;
+  --chart-1: #e8943f;
+  --chart-2: #5da65d;
+  --chart-3: #d4a033;
+  --chart-4: #d46060;
+  --chart-5: #a08ae0;
+  --sidebar: #1e1a17;
+  --sidebar-foreground: #f5ede8;
+  --sidebar-primary: #d97a2b;
+  --sidebar-primary-foreground: #1a1210;
+  --sidebar-accent: #332d28;
+  --sidebar-accent-foreground: #f5ede8;
+  --sidebar-border: #332d28;
+  --sidebar-ring: #d97a2b;
+}

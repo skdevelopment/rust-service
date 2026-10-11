@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::time::Instant;
 
 /// Network test results
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkTestResult {
     pub is_online: bool,
@@ -16,6 +16,7 @@ pub struct NetworkTestResult {
 
 /// Test network connectivity and latency
 #[tauri::command]
+#[specta::specta]
 pub async fn test_network_latency() -> NetworkTestResult {
     // Test connectivity by making requests to multiple endpoints
     let endpoints = [

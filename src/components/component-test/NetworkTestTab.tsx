@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Wifi,
   RefreshCw,
@@ -17,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { commands } from '@/bindings';
 
 interface NetworkTestResult {
   isOnline: boolean;
@@ -49,7 +49,7 @@ export function NetworkTestTab() {
     setResult(null);
 
     try {
-      const testResult = await invoke<NetworkTestResult>('test_network_latency');
+      const testResult = await commands.testNetworkLatency();
       setResult(testResult);
     } catch (err) {
       setResult({

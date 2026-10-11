@@ -4,16 +4,12 @@
 //! captures console output, and parses detection results.
 
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -39,33 +35,15 @@ impl Service for KvrtScanService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "kvrt-scan";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting KVRT antivirus scan...", &mut logs, app);
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting KVRT antivirus scan...");
 
         // Get KVRT executable path
         let exe_path = match get_program_exe_path("kvrt".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: KVRT.exe not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: KVRT.exe not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "KVRT Not Found".to_string(),
                     description: "Kaspersky Virus Removal Tool executable was not found."
@@ -76,35 +54,15 @@ impl Service for KvrtScanService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("KVRT.exe not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("KVRT.exe not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate KVRT: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate KVRT: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(&format!("Found KVRT at: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Found KVRT at: {}", exe_path));
 
         // Build command arguments
         let args = vec![
@@ -115,11 +73,7 @@ impl Service for KvrtScanService {
             "-fixednames",
         ];
 
-        emit_log(
-            "Running scan (this may take several minutes)...",
-            &mut logs,
-            app,
-        );
+        ctx.log("Running scan (this may take several minutes)...");
 
         // Get working directory
         let working_dir = Path::new(&exe_path)
@@ -128,19 +82,15 @@ impl Service for KvrtScanService {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
         // Execute KVRT
-        let output = match Command::new(&exe_path)
-            .args(&args)
-            .current_dir(&working_dir)
-            .output()
-        {
+        let output = match ctx.output(
+            crate::proc::command(&exe_path)
+                .args(&args)
+                .current_dir(&working_dir),
+        ) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute KVRT: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute KVRT: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run KVRT: {}", e),
@@ -149,43 +99,30 @@ impl Service for KvrtScanService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("KVRT completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("KVRT completed with exit code: {}", exit_code));
 
         // Parse output
         let parsed = parse_kvrt_output(&stdout);
 
         // Log summary
         if let Some(processed) = parsed.processed {
-            emit_log(&format!("Objects processed: {}", processed), &mut logs, app);
+            ctx.log(format!("Objects processed: {}", processed));
         }
         if let Some(detected) = parsed.detected {
-            emit_log(&format!("Threats detected: {}", detected), &mut logs, app);
+            ctx.log(format!("Threats detected: {}", detected));
         }
-        emit_log(
-            &format!("Threats removed/neutralized: {}", parsed.removed_count),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Threats removed/neutralized: {}",
+            parsed.removed_count
+        ));
 
         // Determine overall severity
         let (severity, status) = if parsed.detected.unwrap_or(0) > 0 {
@@ -199,7 +136,7 @@ impl Service for KvrtScanService {
         };
 
         // Create summary finding
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: severity.clone(),
             title: status.to_string(),
             description: format!(
@@ -243,7 +180,7 @@ impl Service for KvrtScanService {
                 FindingSeverity::Error
             };
 
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity: det_severity,
                 title: detection.threat.clone(),
                 description: format!("Found in: {}", detection.object_path),
@@ -258,20 +195,12 @@ impl Service for KvrtScanService {
         }
 
         if !stderr.is_empty() && stderr.len() < 500 {
-            emit_log(&format!("KVRT stderr: {}", stderr.trim()), &mut logs, app);
+            ctx.log(format!("KVRT stderr: {}", stderr.trim()));
         }
 
-        emit_log("KVRT scan complete", &mut logs, app);
+        ctx.log("KVRT scan complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0 || parsed.detected.unwrap_or(0) == 0,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(exit_code == 0 || parsed.detected.unwrap_or(0) == 0, None)
     }
 }
 
@@ -290,7 +219,7 @@ struct KvrtParsedOutput {
     removed_count: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 struct KvrtDetection {
     threat: String,
     object_path: String,

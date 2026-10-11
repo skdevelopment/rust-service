@@ -49,14 +49,16 @@ fn save_scripts_config(config: &ScriptConfig) -> Result<(), String> {
 // =============================================================================
 
 /// Get all scripts
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_scripts() -> Result<Vec<Script>, String> {
     let config = load_scripts_config()?;
     Ok(config.scripts)
 }
 
 /// Add a new script
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn add_script(
     name: String,
     description: String,
@@ -75,7 +77,8 @@ pub fn add_script(
 }
 
 /// Update an existing script
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn update_script(
     id: String,
     name: String,
@@ -105,7 +108,8 @@ pub fn update_script(
 }
 
 /// Delete a script
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn delete_script(id: String) -> Result<(), String> {
     let mut config = load_scripts_config()?;
 
@@ -121,7 +125,8 @@ pub fn delete_script(id: String) -> Result<(), String> {
 }
 
 /// Run a script - opens a terminal window with the command
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn run_script(id: String) -> Result<(), String> {
     let mut config = load_scripts_config()?;
 
@@ -173,7 +178,7 @@ fn open_powershell_window(content: &str, run_as_admin: bool) -> Result<(), Strin
         // Note: Start-Process -Verb RunAs spawns a separate process, so the
         // launcher exits quickly. We still clean up after the launcher exits,
         // and add a delayed cleanup as a fallback.
-        let child = Command::new("powershell")
+        let child = crate::proc::command("powershell")
             .args([
                 "-Command",
                 &format!(
@@ -221,7 +226,7 @@ fn open_cmd_window(content: &str, run_as_admin: bool) -> Result<(), String> {
 
     if run_as_admin {
         // Open elevated CMD with the script
-        let child = Command::new("powershell")
+        let child = crate::proc::command("powershell")
             .args([
                 "-Command",
                 &format!(

@@ -6,16 +6,7 @@
  * and fake-drive detection results.
  */
 
-import {
-  Usb,
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  Zap,
-  HardDrive,
-  ShieldCheck,
-  ShieldAlert,
-} from 'lucide-react';
+import { Usb, ArrowDown, ArrowUp, Zap, HardDrive, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { ServiceCardWrapper } from './ServiceCardWrapper';
 import type { ServiceRendererProps } from './index';
@@ -117,16 +108,6 @@ function formatBytes(bytes: number): string {
   if (gb >= 1000) return `${(gb / 1024).toFixed(1)} TB`;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${(bytes / 1_048_576).toFixed(0)} MB`;
-}
-
-function getStatusBadge(status: string) {
-  const colors: Record<string, string> = {
-    PASS: 'bg-green-500/10 text-green-500',
-    'PASS WITH WARNINGS': 'bg-yellow-500/10 text-yellow-500',
-    'ISSUES DETECTED': 'bg-orange-500/10 text-orange-500',
-    FAIL: 'bg-red-500/10 text-red-500',
-  };
-  return colors[status] || 'bg-muted text-muted-foreground';
 }
 
 // =============================================================================

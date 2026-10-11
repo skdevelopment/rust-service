@@ -8,8 +8,7 @@
  * Sub-components are in src/components/service/
  */
 
-import { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -44,6 +43,8 @@ import { PresetsView } from '@/components/service/PresetsView';
 import { QueueView } from '@/components/service/QueueView';
 import { RunnerView } from '@/components/service/RunnerView';
 import { ResultsView } from '@/components/service/ResultsView';
+import { commands } from '@/bindings';
+import { navigateTo } from '@/lib/navigation';
 
 // =============================================================================
 // Main Service Page Component
@@ -66,7 +67,6 @@ export function ServicePage() {
 
   const [phase, setPhase] = useState<ServicePhase>('presets');
   const [queue, setQueue] = useState<ServiceQueueItem[]>([]);
-  const [selectedPresetName, setSelectedPresetName] = useState<string>();
 
   const [missingRequirements, setMissingRequirements] = useState<Record<string, string[]> | null>(null);
   const [showMissingDialog, setShowMissingDialog] = useState(false);
@@ -82,13 +82,6 @@ export function ServicePage() {
 
   // Parallel mode state (passed from QueueView toggle)
   const [parallelMode, setParallelMode] = useState(false);
-
-  // Restore running/results state from context on initial render
-  const initialPhaseSet = useState(() => {
-    if (isRunning) return 'running';
-    if (report && runPhase === 'completed') return 'results';
-    return null;
-  })[0];
 
   // Determine effective phase: if services are running/completed in context, override local phase
   const effectivePhase = (() => {
@@ -145,7 +138,6 @@ export function ServicePage() {
     });
 
     setQueue(queueItems);
-    setSelectedPresetName(preset.name);
     setPhase('queue');
   };
 
@@ -164,9 +156,7 @@ export function ServicePage() {
     try {
       const enabledServiceIds = queue.filter((q) => q.enabled).map((q) => q.serviceId);
       if (enabledServiceIds.length > 0) {
-        const missing = await invoke<Record<string, string[]>>('validate_service_requirements', {
-          serviceIds: enabledServiceIds,
-        });
+        const missing = await commands.validateServiceRequirements(enabledServiceIds);
 
         if (Object.keys(missing).length > 0) {
           setMissingRequirements(missing);
@@ -198,9 +188,7 @@ export function ServicePage() {
       // Safety check: validate requirements again right before starting
       const enabledServiceIds = queue.filter((q) => q.enabled).map((q) => q.serviceId);
       if (enabledServiceIds.length > 0) {
-        const missing = await invoke<Record<string, string[]>>('validate_service_requirements', {
-          serviceIds: enabledServiceIds,
-        });
+        const missing = await commands.validateServiceRequirements(enabledServiceIds);
         if (Object.keys(missing).length > 0) {
           setMissingRequirements(missing);
           setShowMissingDialog(true);
@@ -209,12 +197,7 @@ export function ServicePage() {
         }
       }
 
-      await invoke('run_services', {
-        queue,
-        technicianName: technicianName || null,
-        customerName: custName || null,
-        parallel: useParallel,
-      });
+      await commands.runServices(queue, (technicianName || null) ?? null, (custName || null) ?? null, useParallel ?? null, null);
       // Report will be updated via context events, phase transitions handled by effectivePhase
     } catch (error) {
       console.error('Service run failed:', error);
@@ -233,7 +216,7 @@ export function ServicePage() {
   const handleCancel = async () => {
     try {
       setCancelError(null);
-      await invoke('cancel_service_run');
+      await commands.cancelServiceRun();
       setPhase('queue');
     } catch (error) {
       console.error('Failed to cancel:', error);
@@ -243,7 +226,6 @@ export function ServicePage() {
 
   const handleNewService = () => {
     setQueue([]);
-    setSelectedPresetName(undefined);
     setPhase('presets');
   };
 
@@ -273,7 +255,6 @@ export function ServicePage() {
         <QueueView
           queue={queue}
           definitions={definitions}
-          presetName={selectedPresetName}
           runError={runError}
           onBack={handleBack}
           onStart={handleStart}
@@ -287,7 +268,6 @@ export function ServicePage() {
           definitions={definitions}
           logs={logs}
           onCancel={handleCancel}
-          onBack={handleBack}
           queue={queue}
           cancelError={cancelError}
         />
@@ -333,8 +313,7 @@ export function ServicePage() {
               onClick={() => {
                 setShowMissingDialog(false);
                 // Navigate to Settings tab, then to Programs category
-                window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'settings' }));
-                window.dispatchEvent(new CustomEvent('navigate-settings-category', { detail: 'programs' }));
+                navigateTo('settings', 'programs');
               }}
             >
               Go to Settings

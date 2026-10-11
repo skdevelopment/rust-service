@@ -5,28 +5,9 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import {
-  Rocket,
-  RefreshCw,
-  Power,
-  Trash2,
-  Search,
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-  FolderOpen,
-  Key,
-  Clock,
-  ExternalLink,
-  Filter,
-  ArrowUpDown,
-  Layers,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import { Rocket, RefreshCw, Trash2, Search, AlertCircle, CheckCircle2, Loader2, FolderOpen, Key, Clock, ExternalLink, Filter, ArrowUpDown, Layers, ChevronDown, ChevronUp } from 'lucide-react';
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +32,7 @@ import { AnimatedList, AnimatedItem } from '@/components/animation-context';
 
 import type { StartupItem, StartupSource, StartupImpact } from '@/types';
 import { getSourceDisplayName, getImpactColor } from '@/types/startup';
+import { commands } from '@/bindings';
 
 /** Sort options for startup items */
 const SORT_OPTIONS: { value: SortBy; label: string }[] = [
@@ -122,7 +104,7 @@ export function StartupManagerPage() {
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke<StartupItem[]>('get_startup_items');
+      const result = await commands.getStartupItems();
       setItems(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -139,10 +121,7 @@ export function StartupManagerPage() {
   const handleToggle = async (item: StartupItem) => {
     setToggling(item.id);
     try {
-      await invoke('toggle_startup_item', {
-        id: item.id,
-        enabled: !item.enabled,
-      });
+      await commands.toggleStartupItem(item.id, !item.enabled);
       // Update local state
       setItems(prev => prev.map(i =>
         i.id === item.id ? { ...i, enabled: !i.enabled } : i
@@ -161,7 +140,7 @@ export function StartupManagerPage() {
     if (!deleteItem) return;
     setDeleting(true);
     try {
-      await invoke('delete_startup_item', { id: deleteItem.id, command: deleteItem.command || null });
+      await commands.deleteStartupItem(deleteItem.id);
       setItems(prev => prev.filter(i => i.id !== deleteItem.id));
     } catch (err) {
       console.error('Failed to delete startup item:', err);
@@ -316,7 +295,7 @@ export function StartupManagerPage() {
                       title="Open file location"
                       onClick={(e) => {
                         e.stopPropagation();
-                        invoke('open_startup_item_location', { path: item.path || item.command });
+                        commands.openStartupItemLocation(item.path || item.command);
                       }}
                     >
                       <ExternalLink className="h-4 w-4" />

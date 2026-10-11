@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import {
   AlertCircle,
@@ -24,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Import Legacy Dialog Component
@@ -62,10 +62,7 @@ export function ImportDialog({ open, onOpenChange, onImportComplete }: ImportDia
       setResult(null);
 
       // Call backend import command with file path (backend reads the file)
-      const importedCount = await invoke<number>('import_legacy_programs', {
-        filePath: selected,
-        resetLaunchCount,
-      });
+      const importedCount = await commands.importLegacyPrograms(selected, resetLaunchCount);
 
       setResult({
         success: true,

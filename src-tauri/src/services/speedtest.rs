@@ -3,16 +3,11 @@
 //! Runs the Ookla Speedtest CLI to measure network bandwidth.
 //! Reports download/upload speeds, ping, and overall quality rating.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -37,71 +32,43 @@ impl Service for SpeedtestService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let mut success = true;
         let mut error: Option<String> = None;
-        let service_id = "speedtest";
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting network speed test...", &mut logs, app);
+        ctx.log("Starting network speed test...");
 
         // Get executable path
         let exe_path = match get_program_exe_path("speedtest".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("Speedtest CLI executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(
+                    false,
+                    Some("Speedtest CLI executable not found".to_string()),
+                );
             }
             Err(e) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Failed to get executable path: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Failed to get executable path: {}", e)));
             }
         };
 
-        emit_log(&format!("Using speedtest: {}", exe_path), &mut logs, app);
-        emit_log("Selecting best server...", &mut logs, app);
+        ctx.log(format!("Using speedtest: {}", exe_path));
+        ctx.log("Selecting best server...");
 
         // Run speedtest with JSON output and accept license
-        let output = Command::new(&exe_path)
-            .args(["--accept-license", "--accept-gdpr", "--format=json"])
-            .output();
+        let output = ctx.output(crate::proc::command(&exe_path).args([
+            "--accept-license",
+            "--accept-gdpr",
+            "--format=json",
+        ]));
 
         match output {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = crate::proc::decode_output(&output.stdout);
+                let stderr = crate::proc::decode_output(&output.stderr);
 
                 if !stderr.is_empty() {
-                    emit_log(&format!("stderr: {}", stderr.trim()), &mut logs, app);
+                    ctx.log(format!("stderr: {}", stderr.trim()));
                 }
 
                 match serde_json::from_str::<SpeedtestResult>(&stdout) {
@@ -128,28 +95,24 @@ impl Service for SpeedtestService {
                             .clone()
                             .unwrap_or_else(|| "Unknown ISP".to_string());
 
-                        emit_log(&format!("Server: {}", server_name), &mut logs, app);
-                        emit_log(&format!("ISP: {}", isp), &mut logs, app);
+                        ctx.log(format!("Server: {}", server_name));
+                        ctx.log(format!("ISP: {}", isp));
 
                         if let Some(dl) = download_mbps {
-                            emit_log(&format!("Download: {:.2} Mbps", dl), &mut logs, app);
+                            ctx.log(format!("Download: {:.2} Mbps", dl));
                         }
                         if let Some(ul) = upload_mbps {
-                            emit_log(&format!("Upload: {:.2} Mbps", ul), &mut logs, app);
+                            ctx.log(format!("Upload: {:.2} Mbps", ul));
                         }
                         if let Some(ping) = ping_ms {
-                            emit_log(&format!("Ping: {:.1} ms", ping), &mut logs, app);
+                            ctx.log(format!("Ping: {:.1} ms", ping));
                         }
 
                         // Calculate score and rating
                         let (score, rating, verdict) =
                             calculate_rating(download_mbps, upload_mbps, ping_ms);
 
-                        emit_log(
-                            &format!("Rating: {} ({}/5 stars)", verdict, rating),
-                            &mut logs,
-                            app,
-                        );
+                        ctx.log(format!("Rating: {} ({}/5 stars)", verdict, rating));
 
                         // Determine severity
                         let severity = match rating {
@@ -160,7 +123,7 @@ impl Service for SpeedtestService {
                             _ => FindingSeverity::Error,
                         };
 
-                        findings.push(ServiceFinding {
+                        ctx.findings.push(ServiceFinding {
                             severity,
                             title: format!("Speed Test: {}", verdict),
                             description: format!(
@@ -188,27 +151,19 @@ impl Service for SpeedtestService {
                     Err(e) => {
                         success = false;
                         error = Some(format!("Failed to parse speedtest output: {}", e));
-                        emit_log(&format!("Error parsing output: {}", e), &mut logs, app);
-                        emit_log(&format!("Raw output: {}", stdout), &mut logs, app);
+                        ctx.log(format!("Error parsing output: {}", e));
+                        ctx.log(format!("Raw output: {}", stdout));
                     }
                 }
             }
             Err(e) => {
                 success = false;
                 error = Some(format!("Failed to execute speedtest: {}", e));
-                emit_log(&format!("Error: {}", e), &mut logs, app);
+                ctx.log(format!("Error: {}", e));
             }
         }
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, error)
     }
 }
 
@@ -216,7 +171,7 @@ impl Service for SpeedtestService {
 // Data Structures
 // =============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct SpeedtestResult {
     download: Option<BandwidthData>,
     upload: Option<BandwidthData>,
@@ -226,24 +181,24 @@ struct SpeedtestResult {
     result: Option<ResultData>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct BandwidthData {
     bandwidth: u64, // bytes per second
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct PingData {
     latency: f64,
     jitter: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct ServerData {
     name: String,
     location: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 struct ResultData {
     url: String,
 }

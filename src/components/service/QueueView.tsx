@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   DndContext,
   closestCenter,
@@ -80,6 +79,7 @@ import type {
 import { SortableQueueItem } from './SortableQueueItem';
 import { getIcon } from './utils';
 import { useAnimation } from '@/components/animation-context';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Types
@@ -88,7 +88,6 @@ import { useAnimation } from '@/components/animation-context';
 export interface QueueViewProps {
   queue: ServiceQueueItem[];
   definitions: ServiceDefinition[];
-  presetName?: string;
   runError?: string | null;
   onBack: () => void;
   onStart: (parallel: boolean) => void;
@@ -100,7 +99,7 @@ export interface QueueViewProps {
 // Component
 // =============================================================================
 
-export function QueueView({ queue, definitions, presetName, runError, onBack, onStart, onQueueChange, onPresetSaved }: QueueViewProps) {
+export function QueueView({ queue, definitions, runError, onBack, onStart, onQueueChange, onPresetSaved }: QueueViewProps) {
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -324,7 +323,7 @@ export function QueueView({ queue, definitions, presetName, runError, onBack, on
         icon: 'settings-2',
         color: 'amber',
       };
-      await invoke('save_service_preset', { preset });
+      await commands.saveServicePreset(preset);
       setShowSavePresetDialog(false);
       setSavePresetName('');
       setSavePresetDescription('');

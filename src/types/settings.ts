@@ -6,6 +6,7 @@
  * Use the useSettings() hook to access settings from any component.
  */
 
+import type * as B from '@/bindings';
 // =============================================================================
 // Theme Types
 // =============================================================================
@@ -13,7 +14,7 @@
 /**
  * Valid theme mode options (light/dark/system)
  */
-export type ThemeMode = 'light' | 'dark' | 'system';
+export type ThemeMode = B.ThemeMode;
 
 /**
  * Available color schemes (CSS class names applied to html element)
@@ -29,7 +30,7 @@ export type Theme = ThemeMode;
 /**
  * Valid log level options
  */
-export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+export type LogLevel = B.LogLevel;
 
 // =============================================================================
 // Color Scheme Definitions
@@ -211,82 +212,32 @@ export const COLOR_SCHEMES: ColorSchemeInfo[] = [
 /**
  * Appearance settings for theming and visual preferences
  */
-export interface AppearanceSettings {
-  /** User's theme mode preference (light/dark/system) */
-  theme: ThemeMode;
-  /** Color scheme (applied as CSS class) */
-  colorScheme: ColorScheme;
-  /** Whether animations are enabled */
-  enableAnimations: boolean;
-}
+export type AppearanceSettings = B.AppearanceSettings;
 
 /**
  * Data and storage related settings
  */
-export interface DataSettings {
-  /** Logging verbosity level */
-  logLevel: LogLevel;
-}
+export type DataSettings = B.DataSettings;
 
 /**
  * Report-related settings
  */
-export interface ReportsSettings {
-  /** Whether to automatically save reports when services complete */
-  autoSaveReports: boolean;
-  /** Number of days to retain reports (0 = keep forever) */
-  reportRetentionDays: number;
-  /** Whether to include detailed logs in saved reports */
-  includeLogsInReport: boolean;
-}
+export type ReportsSettings = B.ReportsSettings;
 
 /**
  * Business branding and technician settings
  */
-export interface BusinessSettings {
-  /** Whether business mode is enabled */
-  enabled: boolean;
-  /** Business name */
-  name: string;
-  /** Business logo path (relative to data dir) */
-  logoPath?: string;
-  /** Street address */
-  address: string;
-  /** Phone number */
-  phone: string;
-  /** Email address */
-  email: string;
-  /** Website URL */
-  website: string;
-  /** Tax File Number (Australian) */
-  tfn: string;
-  /** Australian Business Number */
-  abn: string;
-  /** List of technician names */
-  technicians: string[];
-}
+export type BusinessSettings = B.BusinessSettings_Serialize;
 
 /**
  * Required program path overrides
  */
-export interface ProgramsSettings {
-  /** Custom path overrides for required programs (keyed by program ID) */
-  overrides: Record<string, string>;
-}
+export type ProgramsSettings = B.ProgramsSettings;
 
 /**
  * A single technician tab configuration
  */
-export interface TechnicianTab {
-  /** Unique identifier for the tab */
-  id: string;
-  /** Display name shown in the tab bar */
-  name: string;
-  /** URL to load in the iframe */
-  url: string;
-  /** Icon to display (preset icon name, or undefined for auto-favicon) */
-  icon?: string;
-}
+export type TechnicianTab = B.TechnicianTab_Serialize;
 
 /**
  * Available preset icons for technician tabs
@@ -314,29 +265,17 @@ export const TECHNICIAN_TAB_ICONS = [
   { id: 'headphones', name: 'Support', description: 'Help or support' },
 ] as const;
 
-export type TechnicianTabIconId = typeof TECHNICIAN_TAB_ICONS[number]['id'];
-
 /**
  * Technician tabs settings
  */
-export interface TechnicianTabsSettings {
-  /** List of custom technician tabs */
-  tabs: TechnicianTab[];
-  /** Whether to use website favicons for tab icons (when no icon is set) */
-  useFavicons: boolean;
-}
+export type TechnicianTabsSettings = B.TechnicianTabsSettings_Serialize;
 
-import type { ServicePreset } from './service';
-import type { AgentSettings } from './agent';
 import { DEFAULT_AGENT_SETTINGS } from './agent';
 
 /**
  * Service presets settings (custom presets)
  */
-export interface PresetsSettings {
-  /** Custom service presets created or modified by the user */
-  customPresets: ServicePreset[];
-}
+export type PresetsSettings = B.PresetsSettings;
 
 // =============================================================================
 // Main Settings Interface
@@ -352,26 +291,7 @@ export interface PresetsSettings {
  * console.log(settings.appearance.colorScheme); // 'techbay'
  * ```
  */
-export interface AppSettings {
-  /** Settings schema version for migration */
-  version: string;
-  /** Appearance settings (theme, colors) */
-  appearance: AppearanceSettings;
-  /** Data and storage settings */
-  data: DataSettings;
-  /** Report-related settings */
-  reports: ReportsSettings;
-  /** Business branding and technician settings */
-  business: BusinessSettings;
-  /** Required program path overrides */
-  programs: ProgramsSettings;
-  /** Custom technician tabs for embedding external websites */
-  technicianTabs: TechnicianTabsSettings;
-  /** Custom service presets */
-  presets: PresetsSettings;
-  /** Agent AI settings */
-  agent: AgentSettings;
-}
+export type AppSettings = B.AppSettings_Serialize;
 
 // =============================================================================
 // Default Values
@@ -459,58 +379,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
 // Settings Key Types (for update_setting command)
 // =============================================================================
 
-/**
- * Valid setting key paths for the update_setting command
- */
-export type SettingKey =
-  | 'appearance.theme'
-  | 'appearance.colorScheme'
-  | 'appearance.enableAnimations'
-  | 'data.logLevel'
-  | 'reports.autoSaveReports'
-  | 'reports.reportRetentionDays'
-  | 'reports.includeLogsInReport'
-  | 'business.enabled'
-  | 'business.name'
-  | 'business.logoPath'
-  | 'business.address'
-  | 'business.phone'
-  | 'business.email'
-  | 'business.website'
-  | 'business.tfn'
-  | 'business.abn'
-  | 'business.technicians'
-  | 'technicianTabs.tabs'
-  | 'technicianTabs.useFavicons'
-  | 'presets.customPresets'
-  | 'agent';
+type Leaf = string | number | boolean | null | undefined | readonly unknown[];
 
-/**
- * Type-safe mapping of setting keys to their value types
- */
-export type SettingValueType<K extends SettingKey> =
-  K extends 'appearance.theme' ? ThemeMode :
-  K extends 'appearance.colorScheme' ? ColorScheme :
-  K extends 'appearance.enableAnimations' ? boolean :
-  K extends 'data.logLevel' ? LogLevel :
-  K extends 'reports.autoSaveReports' ? boolean :
-  K extends 'reports.reportRetentionDays' ? number :
-  K extends 'reports.includeLogsInReport' ? boolean :
-  K extends 'business.enabled' ? boolean :
-  K extends 'business.name' ? string :
-  K extends 'business.logoPath' ? string | undefined :
-  K extends 'business.address' ? string :
-  K extends 'business.phone' ? string :
-  K extends 'business.email' ? string :
-  K extends 'business.website' ? string :
-  K extends 'business.tfn' ? string :
-  K extends 'business.abn' ? string :
-  K extends 'business.technicians' ? string[] :
-  K extends 'technicianTabs.tabs' ? TechnicianTab[] :
-  K extends 'technicianTabs.useFavicons' ? boolean :
-  K extends 'presets.customPresets' ? ServicePreset[] :
-  K extends 'agent' ? AgentSettings :
-  never;
+/** Every dotted path into `T`, descending into nested objects (not arrays). */
+type PathsOf<T, Prefix extends string = ''> = {
+  [K in keyof T & string]: NonNullable<T[K]> extends Leaf
+    ? `${Prefix}${K}`
+    : `${Prefix}${K}` | PathsOf<NonNullable<T[K]>, `${Prefix}${K}.`>;
+}[keyof T & string];
+
+type ValueAt<T, P extends string> = P extends `${infer Head}.${infer Rest}`
+  ? Head extends keyof T
+    ? ValueAt<NonNullable<T[Head]>, Rest>
+    : never
+  : P extends keyof T
+    ? T[P]
+    : never;
+
+/** Any setting path accepted by the update_setting command, e.g. "agent.apiKeys.openai" */
+export type SettingKey = PathsOf<AppSettings>;
+
+/** The value type stored at a setting path */
+export type SettingValueType<K extends SettingKey> = ValueAt<AppSettings, K>;
 
 /**
  * Settings category IDs for sidebar navigation

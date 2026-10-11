@@ -199,6 +199,10 @@ export interface GenerateFileActivity extends BaseActivity {
   type: 'generate_file';
   filename: string;
   description: string;
+  /** Content to be written (shown for approval) */
+  content?: string;
+  /** Attachment id once generated (used to open the file) */
+  fileId?: string;
   mimeType?: string;
   size?: number;
   path?: string;
@@ -223,6 +227,8 @@ export interface AttachFilesActivity extends BaseActivity {
 export interface ServiceQueueStartedActivity extends BaseActivity {
   type: 'service_queue_started';
   serviceCount: number;
+  /** Services (with options) the run will execute, shown for approval */
+  services?: Array<{ serviceId: string; options?: Record<string, unknown> }>;
   reportId?: string;
   reason?: string;
 }
@@ -319,20 +325,3 @@ export type AgentActivity =
   | ServiceEditActivity
   | ServicePdfActivity;
 
-/**
- * Helper to check if an activity requires approval
- */
-export function isHITLActivity(activity: AgentActivity): boolean {
-  return [
-    'ran_command', 'edit_file', 'write_file', 'generate_file', 'move_file', 'copy_file',
-    'service_queue_started', 'service_paused', 'service_resumed', 'service_cancelled',
-    'service_pdf',
-  ].includes(activity.type);
-}
-
-/**
- * Helper to check if an activity is pending approval
- */
-export function isPendingApproval(activity: AgentActivity): boolean {
-  return activity.status === 'pending_approval';
-}

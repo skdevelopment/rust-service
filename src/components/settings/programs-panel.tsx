@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import {
   ExternalLink,
@@ -22,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import type { RequiredProgramStatus } from '@/types/required-programs';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Required Programs Panel
@@ -36,7 +36,7 @@ export function ProgramsPanel() {
 
   const loadStatuses = async () => {
     try {
-      const data = await invoke<RequiredProgramStatus[]>('get_required_programs_status');
+      const data = await commands.getRequiredProgramsStatus();
       setStatuses(data);
     } catch (e) {
       console.error('Failed to load required programs:', e);
@@ -65,7 +65,7 @@ export function ProgramsPanel() {
         filters: [{ name: 'Executables', extensions: ['exe'] }],
       });
       if (selected) {
-        await invoke('set_program_path_override', { programId, path: selected });
+        await commands.setProgramPathOverride(programId, selected ?? null);
         await loadStatuses();
         setEditingId(null);
         setCustomPath('');
@@ -77,7 +77,7 @@ export function ProgramsPanel() {
 
   const handleSaveCustomPath = async (programId: string) => {
     try {
-      await invoke('set_program_path_override', { programId, path: customPath || null });
+      await commands.setProgramPathOverride(programId, (customPath || null) ?? null);
       await loadStatuses();
       setEditingId(null);
       setCustomPath('');
@@ -88,7 +88,7 @@ export function ProgramsPanel() {
 
   const handleClearOverride = async (programId: string) => {
     try {
-      await invoke('set_program_path_override', { programId, path: null });
+      await commands.setProgramPathOverride(programId, null);
       await loadStatuses();
     } catch (e) {
       console.error('Failed to clear override:', e);
@@ -183,7 +183,7 @@ export function ProgramsPanel() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => window.open(status.definition.url, '_blank')}
+                      onClick={() => window.open(status.definition.url ?? undefined, '_blank')}
                     >
                       <ExternalLink className="h-4 w-4" />
                     </Button>

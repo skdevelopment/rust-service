@@ -15,6 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { SystemInfo } from '@/types';
 import { formatBytes } from '@/types';
 import { SectionHeader } from '@/components/system-info/system-info-helpers';
+import { num } from '@/lib/utils';
 
 interface SystemActivitySectionProps {
   systemInfo: SystemInfo;
@@ -46,8 +47,8 @@ export function SystemActivitySection({ systemInfo }: SystemActivitySectionProps
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">{formatBytes(p.memoryBytes)}</span>
-                        <Badge variant={p.cpuUsage > 80 ? 'destructive' : 'secondary'}>
-                          {p.cpuUsage.toFixed(1)}%
+                        <Badge variant={num(p.cpuUsage) > 80 ? 'destructive' : 'secondary'}>
+                          {num(p.cpuUsage).toFixed(1)}%
                         </Badge>
                       </div>
                     </div>
@@ -70,20 +71,20 @@ export function SystemActivitySection({ systemInfo }: SystemActivitySectionProps
           <CardContent className="space-y-3">
             <div className="flex justify-between items-center py-2">
               <span className="text-muted-foreground text-sm">1 minute</span>
-              <Badge variant={systemInfo.loadAvg.one > 1.0 ? 'destructive' : 'secondary'}>
-                {systemInfo.loadAvg.one.toFixed(2)}
+              <Badge variant={num(systemInfo.loadAvg.one) > 1.0 ? 'destructive' : 'secondary'}>
+                {num(systemInfo.loadAvg.one).toFixed(2)}
               </Badge>
             </div>
             <div className="flex justify-between items-center py-2">
               <span className="text-muted-foreground text-sm">5 minutes</span>
-              <Badge variant={systemInfo.loadAvg.five > 1.0 ? 'destructive' : 'secondary'}>
-                {systemInfo.loadAvg.five.toFixed(2)}
+              <Badge variant={num(systemInfo.loadAvg.five) > 1.0 ? 'destructive' : 'secondary'}>
+                {num(systemInfo.loadAvg.five).toFixed(2)}
               </Badge>
             </div>
             <div className="flex justify-between items-center py-2">
               <span className="text-muted-foreground text-sm">15 minutes</span>
-              <Badge variant={systemInfo.loadAvg.fifteen > 1.0 ? 'destructive' : 'secondary'}>
-                {systemInfo.loadAvg.fifteen.toFixed(2)}
+              <Badge variant={num(systemInfo.loadAvg.fifteen) > 1.0 ? 'destructive' : 'secondary'}>
+                {num(systemInfo.loadAvg.fifteen).toFixed(2)}
               </Badge>
             </div>
           </CardContent>

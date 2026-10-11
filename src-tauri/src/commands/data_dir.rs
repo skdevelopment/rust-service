@@ -29,14 +29,16 @@ pub fn get_data_dir_path() -> PathBuf {
 }
 
 /// Returns the path to the data directory
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_data_dir() -> Result<String, String> {
     let data_dir = get_data_dir_path();
     Ok(data_dir.to_string_lossy().to_string())
 }
 
 /// Creates the data directory structure if it doesn't exist
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn ensure_data_dir() -> Result<(), String> {
     let data_dir = get_data_dir_path();
 

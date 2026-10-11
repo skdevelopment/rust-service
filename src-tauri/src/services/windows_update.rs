@@ -4,16 +4,13 @@
 //! Reports on available updates, installed updates, and reboot requirements.
 
 use std::fs;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -35,7 +32,7 @@ impl Service for WindowsUpdateService {
                 ServiceOptionSchema {
                     id: "install_updates".to_string(),
                     label: "Install Updates".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(true),
                     min: None,
                     max: None,
@@ -47,7 +44,7 @@ impl Service for WindowsUpdateService {
                 ServiceOptionSchema {
                     id: "include_drivers".to_string(),
                     label: "Include Drivers".to_string(),
-                    option_type: "boolean".to_string(),
+                    option_type: OptionType::Boolean,
                     default_value: json!(true),
                     min: None,
                     max: None,
@@ -61,12 +58,7 @@ impl Service for WindowsUpdateService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "windows-update";
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // Parse options
         let install_updates = options
             .get("install_updates")
@@ -77,33 +69,16 @@ impl Service for WindowsUpdateService {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting Windows Update check...", &mut logs, app);
-        emit_log(
-            &format!(
-                "Mode: {}, Include Drivers: {}",
-                if install_updates {
-                    "Install"
-                } else {
-                    "Scan Only"
-                },
-                include_drivers
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log("Starting Windows Update check...");
+        ctx.log(format!(
+            "Mode: {}, Include Drivers: {}",
+            if install_updates {
+                "Install"
+            } else {
+                "Scan Only"
+            },
+            include_drivers
+        ));
 
         // Build PowerShell script
         let script = build_update_script(install_updates, include_drivers);
@@ -113,49 +88,26 @@ impl Service for WindowsUpdateService {
         let script_path = temp_dir.join("rustservice_wu_script.ps1");
 
         if let Err(e) = fs::write(&script_path, &script) {
-            emit_log(
-                &format!("ERROR: Could not write script: {}", e),
-                &mut logs,
-                app,
-            );
-            return ServiceResult {
-                service_id: service_id.to_string(),
-                success: false,
-                error: Some(format!("Failed to write script: {}", e)),
-                duration_ms: start.elapsed().as_millis() as u64,
-                findings,
-                logs,
-                agent_analysis: None,
-            };
+            ctx.log(format!("ERROR: Could not write script: {}", e));
+            return ctx.finish(false, Some(format!("Failed to write script: {}", e)));
         }
 
-        emit_log(
-            "Executing Windows Update PowerShell script...",
-            &mut logs,
-            app,
-        );
-        emit_log("This may take several minutes...", &mut logs, app);
+        ctx.log("Executing Windows Update PowerShell script...");
+        ctx.log("This may take several minutes...");
 
         // Execute PowerShell
-        let output = match Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                &script_path.to_string_lossy(),
-            ])
-            .output()
-        {
+        let output = match ctx.output(crate::proc::command("powershell.exe").args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &script_path.to_string_lossy(),
+        ])) {
             Ok(output) => output,
             Err(e) => {
                 let _ = fs::remove_file(&script_path);
-                emit_log(
-                    &format!("ERROR: Failed to run PowerShell: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run PowerShell: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "PowerShell Execution Failed".to_string(),
                     description: format!("Could not execute PowerShell script: {}", e),
@@ -164,61 +116,40 @@ impl Service for WindowsUpdateService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("PowerShell execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("PowerShell execution failed: {}", e)));
             }
         };
 
         // Clean up temp file
         let _ = fs::remove_file(&script_path);
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = crate::proc::decode_output(&output.stdout).to_string();
+        let stderr = crate::proc::decode_output(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        emit_log(
-            &format!("PowerShell completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "PowerShell completed with exit code: {}",
+            exit_code
+        ));
 
         // Parse JSON output from script
         let parsed = parse_update_output(&stdout);
 
         // Log results
-        emit_log(
-            &format!("Available updates: {}", parsed.available_count),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Available updates: {}", parsed.available_count));
         if install_updates {
-            emit_log(
-                &format!("Installed updates: {}", parsed.installed_count),
-                &mut logs,
-                app,
-            );
-            emit_log(
-                &format!("Failed updates: {}", parsed.failed_count),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!("Installed updates: {}", parsed.installed_count));
+            ctx.log(format!("Failed updates: {}", parsed.failed_count));
         }
         if parsed.reboot_required {
-            emit_log("Reboot is required to complete updates", &mut logs, app);
+            ctx.log("Reboot is required to complete updates");
         }
 
         // Log any stderr (usually module installation messages)
         if !stderr.is_empty() {
             for line in stderr.lines().take(10) {
                 if !line.trim().is_empty() {
-                    emit_log(&format!("[PS] {}", line), &mut logs, app);
+                    ctx.log(format!("[PS] {}", line));
                 }
             }
         }
@@ -296,7 +227,7 @@ impl Service for WindowsUpdateService {
             }
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -320,21 +251,12 @@ impl Service for WindowsUpdateService {
             })),
         });
 
-        emit_log(
-            &format!("Windows Update {} complete", mode_desc),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Windows Update {} complete", mode_desc));
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: parsed.error.is_none() && parsed.failed_count == 0,
-            error: parsed.error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(
+            parsed.error.is_none() && parsed.failed_count == 0,
+            parsed.error,
+        )
     }
 }
 

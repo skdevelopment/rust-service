@@ -8,18 +8,67 @@ use regex::Regex;
 
 use super::{get_data_dir_path, FileEntry, Instrument};
 
-/// Canonicalizes a path and blocks access to critical Windows system directories.
+/// A page of a text file read by the agent
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFileResult {
+    pub content: String,
+    pub total_lines: usize,
+    pub has_more: bool,
+}
+
+/// Outcome of a find-and-replace edit
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EditFileResult {
+    /// "success" or "error"
+    pub status: String,
+    pub replacements: usize,
+    pub message: String,
+}
+
+/// One grep match
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepMatch {
+    pub file: String,
+    pub line: usize,
+    pub content: String,
+}
+
+/// One glob match
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobMatch {
+    pub path: String,
+    pub name: String,
+    pub modified: String,
+    pub size: u64,
+}
+
+/// Largest file the agent may read in one go (keeps a stray log dump from
+/// exhausting memory or the model's context).
+const MAX_AGENT_READ_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Canonicalizes a path and enforces the agent file-access policy.
 ///
-/// For new files (not yet on disk), canonicalizes the parent and re-appends the
-/// filename so that `../` tricks are resolved before the path is used.
-fn validate_agent_path(path: &std::path::Path) -> Result<PathBuf, String> {
+/// Used by every agent and MCP file tool. For new files (not yet on disk), the
+/// parent is canonicalized and the filename re-appended so that `../` tricks
+/// are resolved before the path is used.
+///
+/// Policy:
+/// - the path must be under the data folder, the working directory, or the
+///   user's home directory;
+/// - critical Windows system directories are always denied;
+/// - the app's own secrets (settings.json with API keys, the agent database)
+///   are denied, so a prompt-injected agent cannot read or rewrite them.
+pub(crate) fn validate_agent_path(path: &std::path::Path) -> Result<PathBuf, String> {
     let canonical = path.canonicalize().or_else(|_| {
         if let Some(parent) = path.parent() {
             let canonical_parent = parent
                 .canonicalize()
                 .map_err(|e| format!("Invalid path: {}", e))?;
-            Ok(canonical_parent
-                .join(path.file_name().ok_or("Invalid filename")?))
+            Ok(canonical_parent.join(path.file_name().ok_or("Invalid filename")?))
         } else {
             Err(format!("Invalid path: {}", path.display()))
         }
@@ -54,6 +103,13 @@ fn validate_agent_path(path: &std::path::Path) -> Result<PathBuf, String> {
         .and_then(|p| p.canonicalize().ok());
     let home_dir = dirs::home_dir().and_then(|p| p.canonicalize().ok());
 
+    if is_app_secret(&canonical, &data_dir) {
+        return Err(
+            "Access denied: application settings and databases are not accessible to the agent"
+                .to_string(),
+        );
+    }
+
     let allowed_dirs: Vec<PathBuf> = [Some(data_dir), cwd, home_dir]
         .into_iter()
         .flatten()
@@ -70,20 +126,73 @@ fn validate_agent_path(path: &std::path::Path) -> Result<PathBuf, String> {
         ));
     }
 
-    Ok(canonical)
+    Ok(simplify_verbatim(canonical))
+}
+
+/// Turn `\\?\C:\dir` (what `canonicalize` returns on Windows) back into
+/// `C:\dir`, so paths shown to the model and fed to `glob` look normal.
+pub(crate) fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// Files inside the data folder that hold secrets or app state the agent must
+/// not touch: settings (and their temp/backup copies) and the agent database.
+/// Attachments under `agent/files` stay readable.
+fn is_app_secret(canonical: &std::path::Path, data_dir: &std::path::Path) -> bool {
+    let Ok(rel) = canonical.strip_prefix(data_dir) else {
+        return false;
+    };
+    let mut parts = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase());
+    match (parts.next(), parts.next()) {
+        (Some(first), _) if first.starts_with("settings") => true,
+        (Some(first), Some(second)) if first == "agent" => second != "files",
+        (Some(first), None) if first == "agent" => false,
+        _ => false,
+    }
+}
+
+/// Reject glob patterns that could walk out of the validated base directory.
+fn validate_glob_pattern(pattern: &str) -> Result<(), String> {
+    let normalized = pattern.replace('\\', "/");
+    if normalized.split('/').any(|part| part == "..")
+        || normalized.starts_with('/')
+        || normalized.contains(':')
+    {
+        return Err("Glob patterns must be relative and may not contain '..'".to_string());
+    }
+    Ok(())
 }
 
 /// Read file with optional line numbers and pagination
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_read_file(
     path: String,
     offset: Option<usize>,
     limit: Option<usize>,
     line_numbers: Option<bool>,
-) -> Result<serde_json::Value, String> {
+) -> Result<ReadFileResult, String> {
     let safe_path = validate_agent_path(std::path::Path::new(&path))?;
-    let content =
-        fs::read_to_string(&safe_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let size = fs::metadata(&safe_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?
+        .len();
+    if size > MAX_AGENT_READ_BYTES {
+        return Err(format!(
+            "File is too large to read ({} MB, limit {} MB)",
+            size / (1024 * 1024),
+            MAX_AGENT_READ_BYTES / (1024 * 1024)
+        ));
+    }
+    let bytes = fs::read(&safe_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let content = String::from_utf8(bytes).map_err(|_| {
+        "File is not UTF-8 text (binary files cannot be read with this tool)".to_string()
+    })?;
 
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
@@ -110,16 +219,17 @@ pub fn agent_read_file(
         selected.join("\n")
     };
 
-    Ok(serde_json::json!({
-        "content": formatted_content,
-        "total_lines": total_lines,
-        "has_more": end < total_lines,
-    }))
+    Ok(ReadFileResult {
+        content: formatted_content,
+        total_lines,
+        has_more: end < total_lines,
+    })
 }
 
 /// Write to a file (requires approval in non-YOLO mode)
 /// Creates parent directories if they don't exist
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_write_file(path: String, content: String) -> Result<(), String> {
     let path_buf = PathBuf::from(&path);
 
@@ -137,7 +247,8 @@ pub fn agent_write_file(path: String, content: String) -> Result<(), String> {
     fs::write(&safe_path, content).map_err(|e| format!("Failed to write file: {}", e))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_list_dir(path: String) -> Result<Vec<FileEntry>, String> {
     let safe_path = validate_agent_path(std::path::Path::new(&path))?;
     let mut entries = Vec::new();
@@ -162,14 +273,16 @@ pub fn agent_list_dir(path: String) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_move_file(src: String, dest: String) -> Result<(), String> {
     let safe_src = validate_agent_path(std::path::Path::new(&src))?;
     let safe_dest = validate_agent_path(std::path::Path::new(&dest))?;
     fs::rename(&safe_src, &safe_dest).map_err(|e| format!("Failed to move file: {}", e))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_copy_file(src: String, dest: String) -> Result<(), String> {
     let safe_src = validate_agent_path(std::path::Path::new(&src))?;
     let safe_dest = validate_agent_path(std::path::Path::new(&dest))?;
@@ -179,7 +292,8 @@ pub fn agent_copy_file(src: String, dest: String) -> Result<(), String> {
 }
 
 /// List instruments (custom scripts)
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn list_instruments() -> Result<Vec<Instrument>, String> {
     let instruments_dir = get_data_dir_path().join("instruments");
     if !instruments_dir.exists() {
@@ -231,7 +345,8 @@ fn collect_exes_recursive(dir: &std::path::Path, root: &std::path::Path, acc: &m
 }
 
 /// List programs in the programs folder
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn list_agent_programs() -> Result<Vec<HashMap<String, String>>, String> {
     let programs_dir = get_data_dir_path().join("programs");
 
@@ -270,7 +385,8 @@ pub fn list_agent_programs() -> Result<Vec<HashMap<String, String>>, String> {
 }
 
 /// Find executables by name/keyword across the programs folder and optionally system PATH
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_find_exe(query: String, search_path: Option<bool>) -> Result<Vec<String>, String> {
     let programs_dir = get_data_dir_path().join("programs");
     let query_lower = query.to_lowercase();
@@ -301,11 +417,11 @@ pub fn agent_find_exe(query: String, search_path: Option<bool>) -> Result<Vec<St
     }
 
     if search_path.unwrap_or(false) {
-        if let Ok(output) = std::process::Command::new("where.exe")
-            .arg(&query)
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(output) = crate::proc::output_with_timeout(
+            crate::proc::command("where.exe").arg(&query),
+            crate::proc::QUERY_TIMEOUT,
+        ) {
+            let stdout = crate::proc::decode_output(&output.stdout);
             for line in stdout.lines() {
                 let t = line.trim().to_string();
                 if !t.is_empty() {
@@ -319,32 +435,37 @@ pub fn agent_find_exe(query: String, search_path: Option<bool>) -> Result<Vec<St
 }
 
 /// Edit file by replacing old_string with new_string
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_edit_file(
     path: String,
     old_string: String,
     new_string: String,
     all: Option<bool>,
-) -> Result<serde_json::Value, String> {
+) -> Result<EditFileResult, String> {
+    let path = validate_agent_path(std::path::Path::new(&path))?;
     let text = fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let replace_all = all.unwrap_or(false);
 
     if !text.contains(&old_string) {
-        return Ok(serde_json::json!({
-            "status": "error",
-            "replacements": 0,
-            "message": "old_string not found in file",
-        }));
+        return Ok(EditFileResult {
+            status: "error".into(),
+            replacements: 0,
+            message: "old_string not found in file".into(),
+        });
     }
 
     let count = text.matches(&old_string).count();
     if !replace_all && count > 1 {
-        return Ok(serde_json::json!({
-            "status": "error",
-            "replacements": 0,
-            "message": format!("old_string appears {} times, must be unique (use all=true)", count),
-        }));
+        return Ok(EditFileResult {
+            status: "error".into(),
+            replacements: 0,
+            message: format!(
+                "old_string appears {} times, must be unique (use all=true)",
+                count
+            ),
+        });
     }
 
     let replacement = if replace_all {
@@ -357,40 +478,48 @@ pub fn agent_edit_file(
 
     let replacements = if replace_all { count } else { 1 };
 
-    Ok(serde_json::json!({
-        "status": "success",
-        "replacements": replacements,
-        "message": format!("Successfully made {} replacement{}", replacements, if replacements > 1 { "s" } else { "" }),
-    }))
+    Ok(EditFileResult {
+        status: "success".into(),
+        replacements,
+        message: format!(
+            "Successfully made {} replacement{}",
+            replacements,
+            if replacements > 1 { "s" } else { "" }
+        ),
+    })
 }
 
 /// Grep - search for regex pattern across files
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_grep(
     pattern: String,
     path: Option<String>,
     file_pattern: Option<String>,
     max_results: Option<usize>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<GrepMatch>, String> {
     let regex = Regex::new(&pattern).map_err(|e| format!("Invalid regex pattern: {}", e))?;
 
     let base_path = path.unwrap_or_else(|| ".".to_string());
-    let base_path_buf = PathBuf::from(&base_path);
-    validate_agent_path(&base_path_buf)?;
+    let base = validate_agent_path(&PathBuf::from(&base_path))?;
 
     let max = max_results.unwrap_or(50);
     let glob_pat = file_pattern.unwrap_or_else(|| "*".to_string());
+    validate_glob_pattern(&glob_pat)?;
 
     let mut results = Vec::new();
 
-    // Build glob pattern
-    let full_pattern = format!("{}/**/{}", base_path, glob_pat);
+    let full_pattern = format!(
+        "{}/**/{}",
+        glob::Pattern::escape(&base.to_string_lossy()),
+        glob_pat
+    );
 
     for entry in glob::glob(&full_pattern)
         .map_err(|e| format!("Invalid glob pattern: {}", e))?
         .flatten()
     {
-        if !entry.is_file() {
+        if !entry.is_file() || validate_agent_path(&entry).is_err() {
             continue;
         }
 
@@ -398,11 +527,11 @@ pub fn agent_grep(
         if let Ok(content) = fs::read_to_string(&entry) {
             for (line_num, line) in content.lines().enumerate() {
                 if regex.is_match(line) {
-                    results.push(serde_json::json!({
-                        "file": entry.to_string_lossy().to_string(),
-                        "line": line_num + 1,
-                        "content": line.to_string(),
-                    }));
+                    results.push(GrepMatch {
+                        file: entry.to_string_lossy().to_string(),
+                        line: line_num + 1,
+                        content: line.to_string(),
+                    });
 
                     if results.len() >= max {
                         return Ok(results);
@@ -416,19 +545,24 @@ pub fn agent_grep(
 }
 
 /// Glob - find files matching pattern, sorted by mtime
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn agent_glob(
     pattern: String,
     path: Option<String>,
     limit: Option<usize>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<GlobMatch>, String> {
     let base_path = path.unwrap_or_else(|| ".".to_string());
-    let base_path_buf = PathBuf::from(&base_path);
-    validate_agent_path(&base_path_buf)?;
+    let base = validate_agent_path(&PathBuf::from(&base_path))?;
+    validate_glob_pattern(&pattern)?;
 
     let max = limit.unwrap_or(100);
 
-    let full_pattern = format!("{}/{}", base_path, pattern);
+    let full_pattern = format!(
+        "{}/{}",
+        glob::Pattern::escape(&base.to_string_lossy()),
+        pattern
+    );
 
     let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> = Vec::new();
 
@@ -436,6 +570,9 @@ pub fn agent_glob(
         .map_err(|e| format!("Invalid glob pattern: {}", e))?
         .flatten()
     {
+        if validate_agent_path(&entry).is_err() {
+            continue;
+        }
         if let Ok(metadata) = fs::metadata(&entry) {
             let mtime = metadata
                 .modified()
@@ -448,7 +585,7 @@ pub fn agent_glob(
     // Sort by modification time (newest first)
     files.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let results: Vec<serde_json::Value> = files
+    let results: Vec<GlobMatch> = files
         .into_iter()
         .take(max)
         .map(|(path, mtime, size)| {
@@ -456,14 +593,15 @@ pub fn agent_glob(
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
 
-            serde_json::json!({
-                "path": path.to_string_lossy().to_string(),
-                "name": path.file_name()
+            GlobMatch {
+                path: path.to_string_lossy().to_string(),
+                name: path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default(),
-                "modified": modified_str,
-                "size": size,
-            })
+                modified: modified_str,
+                size,
+            }
         })
         .collect();
 

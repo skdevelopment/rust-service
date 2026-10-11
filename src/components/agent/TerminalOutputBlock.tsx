@@ -7,18 +7,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import {
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Check,
-  X,
-  ExternalLink,
-  Terminal,
-  Loader2,
-  Play,
-  AlertCircle,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Check, X, Terminal, Loader2, Play, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { ActivityStatus } from '@/types/agent-activity';

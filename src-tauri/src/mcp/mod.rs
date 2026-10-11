@@ -1,10 +1,9 @@
 //! MCP Server Module
 //!
-//! Implements a Model Context Protocol server for remote LLM control.
-//! Uses rmcp crate with streamable HTTP transport.
+//! Implements a Model Context Protocol server (JSON-RPC over HTTP) for remote
+//! LLM control. Tools reuse the in-app agent's command functions.
 
-mod handlers;
 mod server;
 mod tools;
 
-pub use server::start_mcp_server_background;
+pub use server::apply_settings;

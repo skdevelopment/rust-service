@@ -5,8 +5,8 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import type { RestorePointsResponse } from '@/components/system-info/types';
+import { commands } from '@/bindings';
 
 export interface UseRestorePointsReturn {
   restorePoints: RestorePointsResponse | null;
@@ -40,7 +40,7 @@ export function useRestorePoints(): UseRestorePointsReturn {
   const fetchRestorePoints = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await invoke<RestorePointsResponse>('get_restore_points');
+      const result = await commands.getRestorePoints();
       setRestorePoints(result);
     } catch (err) {
       setRestorePoints({ restorePoints: [], error: String(err) });
@@ -60,7 +60,7 @@ export function useRestorePoints(): UseRestorePointsReturn {
     setCreateError(null);
     setCreateSuccess(null);
     try {
-      const msg = await invoke<string>('create_restore_point', { description: description.trim() });
+      const msg = await commands.createRestorePoint(description.trim());
       setCreateSuccess(msg);
       setDescription('');
       setDialogOpen(false);

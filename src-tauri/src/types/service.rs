@@ -19,17 +19,30 @@ pub type ReportId = String;
 // Service Definitions
 // =============================================================================
 
+/// Kind of input a service option is edited with
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionType {
+    Number,
+    String,
+    Boolean,
+    Select,
+    /// Picker for a connected removable drive
+    UsbDrive,
+}
+
 /// Schema for a service option field
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceOptionSchema {
     /// Option identifier
     pub id: String,
     /// Display label
     pub label: String,
-    /// Option type: "number", "string", "boolean", "select"
-    pub option_type: String,
+    /// Option type
+    pub option_type: OptionType,
     /// Default value (JSON encoded)
+    #[specta(type = specta_typescript::Unknown)]
     pub default_value: serde_json::Value,
     /// For number type: minimum value
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,7 +59,7 @@ pub struct ServiceOptionSchema {
 }
 
 /// Option for select-type service options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectOption {
     pub value: String,
@@ -54,7 +67,7 @@ pub struct SelectOption {
 }
 
 /// Definition of a service that can be run
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDefinition {
     /// Unique service identifier
@@ -90,7 +103,7 @@ pub struct ServiceDefinition {
 // =============================================================================
 
 /// A preset configuration of services
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServicePreset {
     /// Preset identifier
@@ -108,7 +121,7 @@ pub struct ServicePreset {
 }
 
 /// Service configuration within a preset
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetServiceConfig {
     /// Service ID
@@ -116,6 +129,7 @@ pub struct PresetServiceConfig {
     /// Whether enabled by default in this preset
     pub enabled: bool,
     /// Default options for this service in the preset
+    #[specta(type = std::collections::HashMap<String, specta_typescript::Unknown>)]
     pub options: serde_json::Value,
 }
 
@@ -124,9 +138,13 @@ pub struct PresetServiceConfig {
 // =============================================================================
 
 /// An item in the service run queue
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceQueueItem {
+    /// Unique id of this queue entry (lets the same service appear twice).
+    /// Generated when the frontend doesn't send one.
+    #[serde(default = "new_queue_item_id")]
+    pub id: String,
     /// Service ID
     pub service_id: ServiceId,
     /// Whether this service is enabled for the run
@@ -134,7 +152,12 @@ pub struct ServiceQueueItem {
     /// Order in the queue (0-indexed)
     pub order: u32,
     /// User-configured options
+    #[specta(type = std::collections::HashMap<String, specta_typescript::Unknown>)]
     pub options: serde_json::Value,
+}
+
+fn new_queue_item_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 // =============================================================================
@@ -142,7 +165,7 @@ pub struct ServiceQueueItem {
 // =============================================================================
 
 /// Severity level for a finding
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingSeverity {
     Info,
@@ -153,7 +176,7 @@ pub enum FindingSeverity {
 }
 
 /// A single finding from a service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceFinding {
     /// Severity level
@@ -167,11 +190,12 @@ pub struct ServiceFinding {
     pub recommendation: Option<String>,
     /// Raw data (for technical details)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub data: Option<serde_json::Value>,
 }
 
 /// Result of running a single service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceResult {
     /// Service ID that was run
@@ -190,10 +214,13 @@ pub struct ServiceResult {
     /// Agent-generated analysis for this service result
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_analysis: Option<String>,
+    /// Id of the queue entry that produced this result
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_item_id: Option<String>,
 }
 
 /// Status of a service run
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceRunStatus {
     /// Run is queued but not started
@@ -211,7 +238,7 @@ pub enum ServiceRunStatus {
 }
 
 /// A complete service run report
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceReport {
     /// Unique report ID
@@ -253,6 +280,9 @@ pub struct ServiceReport {
     /// Agent-computed health score (0-100)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_score: Option<u8>,
+    /// Why the run ended abnormally (worker crash), if it did
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // =============================================================================
@@ -260,7 +290,7 @@ pub struct ServiceReport {
 // =============================================================================
 
 /// Global service run state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 #[derive(Default)]
 pub struct ServiceRunState {
@@ -273,13 +303,12 @@ pub struct ServiceRunState {
     pub current_report: Option<ServiceReport>,
 }
 
-
 // =============================================================================
 // Report Statistics (computed by agent tooling)
 // =============================================================================
 
 /// Computed statistics for a service report
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportStatistics {
     /// Total number of services run
@@ -305,7 +334,7 @@ pub struct ReportStatistics {
 }
 
 /// Counts of findings grouped by severity
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FindingSeverityCounts {
     pub info: usize,

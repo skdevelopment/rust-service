@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A program required by one or more services
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredProgramDef {
     /// Stable identifier used in service definitions (e.g. "bleachbit")
@@ -22,19 +22,8 @@ pub struct RequiredProgramDef {
     pub url: Option<String>,
 }
 
-/// User's configured path for a required program (stored in settings)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct RequiredProgramConfig {
-    /// Program ID
-    pub id: String,
-    /// User-specified executable path (overrides auto-detection)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_path: Option<String>,
-}
-
 /// Status of a required program (for frontend display)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredProgramStatus {
     /// Program definition

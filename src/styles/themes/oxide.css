@@ -1,0 +1,75 @@
+/* =============================================================================
+   Oxide Theme (Burnt orange/terracotta on warm grays — earthy industrial)
+   Apply with: .theme-oxide on <html>
+   ============================================================================= */
+
+.theme-oxide {
+  --background: #f8f3f0;
+  --foreground: #171312;
+  --card: #ffffff;
+  --card-foreground: #171312;
+  --popover: #ffffff;
+  --popover-foreground: #171312;
+  --primary: #c05a30;
+  --primary-foreground: #fef0e8;
+  --secondary: #ede4dc;
+  --secondary-foreground: #171312;
+  --muted: #ede4dc;
+  --muted-foreground: #6e6058;
+  --accent: #e4d8cc;
+  --accent-foreground: #171312;
+  --destructive: #b83b3b;
+  --destructive-foreground: #ffffff;
+  --border: #d8ccc0;
+  --input: #e4d8cc;
+  --ring: #c05a30;
+  --chart-1: #c05a30;
+  --chart-2: #5a9c5a;
+  --chart-3: #c89830;
+  --chart-4: #b83b3b;
+  --chart-5: #8a6eb4;
+  --sidebar: #ede4dc;
+  --sidebar-foreground: #171312;
+  --sidebar-primary: #c05a30;
+  --sidebar-primary-foreground: #fef0e8;
+  --sidebar-accent: #e4d8cc;
+  --sidebar-accent-foreground: #171312;
+  --sidebar-border: #d8ccc0;
+  --sidebar-ring: #c05a30;
+  --radius: 0.625rem;
+}
+
+.theme-oxide.dark {
+  --background: #171312;
+  --foreground: #ede6e0;
+  --card: #1e1917;
+  --card-foreground: #ede6e0;
+  --popover: #1e1917;
+  --popover-foreground: #ede6e0;
+  --primary: #c05a30;
+  --primary-foreground: #fef0e8;
+  --secondary: #2e2723;
+  --secondary-foreground: #ede6e0;
+  --muted: #1a1615;
+  --muted-foreground: #8a7d74;
+  --accent: #2e2723;
+  --accent-foreground: #ede6e0;
+  --destructive: #b83b3b;
+  --destructive-foreground: #ffffff;
+  --border: #2e2723;
+  --input: #2e2723;
+  --ring: #c05a30;
+  --chart-1: #d87040;
+  --chart-2: #5a9c5a;
+  --chart-3: #c89830;
+  --chart-4: #d45050;
+  --chart-5: #a080d0;
+  --sidebar: #1a1615;
+  --sidebar-foreground: #ede6e0;
+  --sidebar-primary: #c05a30;
+  --sidebar-primary-foreground: #fef0e8;
+  --sidebar-accent: #2e2723;
+  --sidebar-accent-foreground: #ede6e0;
+  --sidebar-border: #2e2723;
+  --sidebar-ring: #c05a30;
+}

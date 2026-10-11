@@ -1,7 +1,7 @@
 //! Agent commands
 //!
 //! Tauri commands for the agentic AI system including command execution,
-//! memory management, and search functionality.
+//! file access, attachments, conversations, and search.
 
 pub mod attachments;
 pub mod commands;
@@ -9,27 +9,20 @@ pub mod conversations;
 pub mod files;
 pub mod search;
 
-pub use attachments::*;
-pub use commands::*;
-pub use conversations::*;
-pub use files::*;
-pub use search::*;
-
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use rusqlite::Connection;
 
 pub(super) use super::data_dir::get_data_dir_path;
 pub(super) use super::settings::get_settings;
 use crate::types::{
-    AgentSettings, ApprovalMode, CommandExecutionResult, CommandStatus, Conversation,
-    ConversationMessage, ConversationWithMessages, PendingCommand,
-    SearchResult,
+    CommandExecutionResult, CommandStatus, Conversation, ConversationMessage,
+    ConversationWithMessages, PendingCommand, SearchResult,
 };
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub name: String,
     pub path: String,
@@ -37,44 +30,13 @@ pub struct FileEntry {
     pub size: u64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct Instrument {
     pub name: String,
     pub description: String,
     pub path: String,
     pub extension: String,
-}
-
-// =============================================================================
-// Global State
-// =============================================================================
-
-/// Pending commands awaiting approval
-pub(super) static PENDING_COMMANDS: Mutex<Vec<PendingCommand>> = Mutex::new(Vec::new());
-
-// =============================================================================
-// Machine Identification
-// =============================================================================
-
-/// Get a unique identifier for the current machine
-/// Uses computer name as primary identifier, which is human-readable
-/// and consistent across reboots
-pub(super) fn get_current_machine_id() -> String {
-    // Use the COMPUTERNAME environment variable on Windows
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .or_else(|_| {
-            gethostname::gethostname()
-                .into_string()
-                .map_err(|_| std::env::VarError::NotPresent)
-        })
-        .unwrap_or_else(|_| "unknown-machine".to_string())
-}
-
-/// Get the current machine identifier (exposed to frontend)
-#[tauri::command]
-pub fn get_machine_id() -> Result<String, String> {
-    Ok(get_current_machine_id())
 }
 
 // =============================================================================

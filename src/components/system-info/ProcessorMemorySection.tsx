@@ -18,6 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { SystemInfo } from '@/types';
 import { formatBytes } from '@/types';
 import { SectionHeader, InfoRow, UsageBar } from '@/components/system-info/system-info-helpers';
+import { num } from '@/lib/utils';
 
 interface ProcessorMemorySectionProps {
   systemInfo: SystemInfo;
@@ -61,8 +62,8 @@ export function ProcessorMemorySection({ systemInfo }: ProcessorMemorySectionPro
             <Separator className="my-2" />
             <div className="flex justify-between items-center py-2">
               <span className="text-muted-foreground text-sm">Average CPU usage</span>
-              <Badge variant={systemInfo.cpu.globalUsage > 80 ? 'destructive' : 'secondary'}>
-                {systemInfo.cpu.globalUsage.toFixed(1)}%
+              <Badge variant={num(systemInfo.cpu.globalUsage) > 80 ? 'destructive' : 'secondary'}>
+                {num(systemInfo.cpu.globalUsage).toFixed(1)}%
               </Badge>
             </div>
             <Progress value={systemInfo.cpu.globalUsage} className="h-2" />
@@ -122,8 +123,8 @@ export function ProcessorMemorySection({ systemInfo }: ProcessorMemorySectionPro
                           <span className="text-xs text-muted-foreground">
                             {core.frequencyMhz} MHz
                           </span>
-                          <Badge variant={core.cpuUsage > 80 ? 'destructive' : 'secondary'}>
-                            {core.cpuUsage.toFixed(1)}%
+                          <Badge variant={num(core.cpuUsage) > 80 ? 'destructive' : 'secondary'}>
+                            {num(core.cpuUsage).toFixed(1)}%
                           </Badge>
                         </div>
                       </div>

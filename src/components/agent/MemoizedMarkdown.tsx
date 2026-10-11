@@ -11,6 +11,7 @@
 import { memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { marked } from 'marked';
 
 /**
@@ -121,11 +122,46 @@ const MemoizedMarkdownBlock = memo(
             return <h3 className="text-sm font-bold mt-2 mb-1 text-foreground">{children}</h3>;
           },
           // Links
+          // Links open in the system browser, never inside the app window.
           a({ href, children }) {
+            const external = !!href && /^(https?:|mailto:)/i.test(href);
             return (
-              <a href={href} className="text-primary underline underline-offset-2 hover:text-primary/80" target="_blank" rel="noopener noreferrer">
+              <a
+                href={href}
+                className="text-primary underline underline-offset-2 hover:text-primary/80"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (external) openUrl(href!).catch((err) => console.error('Failed to open link:', err));
+                }}
+              >
                 {children}
               </a>
+            );
+          },
+          // Remote images are not fetched: a prompt-injected model could
+          // otherwise leak data through the image URL. Inline images still render.
+          img({ src, alt }) {
+            const url = typeof src === 'string' ? src : '';
+            if (/^(data:image\/|blob:)/i.test(url)) {
+              return <img src={url} alt={alt ?? ''} className="max-w-full rounded my-2" />;
+            }
+            return (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground border border-border/50 rounded px-1.5 py-0.5">
+                [image not loaded{alt ? `: ${alt}` : ''}]
+                {/^https?:/i.test(url) && (
+                  <a
+                    href={url}
+                    className="text-primary underline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openUrl(url).catch((err) => console.error('Failed to open image link:', err));
+                    }}
+                  >
+                    open
+                  </a>
+                )}
+              </span>
             );
           },
           // Blockquotes

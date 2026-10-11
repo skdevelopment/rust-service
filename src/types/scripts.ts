@@ -4,34 +4,17 @@
  * Types for managing PowerShell and CMD scripts.
  */
 
+
+import type * as B from '@/bindings';
 /**
  * Script interpreter type
  */
-export type ScriptType = 'powershell' | 'cmd';
+export type ScriptType = B.ScriptType;
 
 /**
  * Represents a saved script managed by RustService
  */
-export interface Script {
-  /** Unique identifier for the script */
-  id: string;
-  /** Display name */
-  name: string;
-  /** Description of what the script does */
-  description: string;
-  /** Type of script interpreter */
-  scriptType: ScriptType;
-  /** The actual script content/code */
-  content: string;
-  /** Whether this script should run with admin privileges */
-  runAsAdmin: boolean;
-  /** Number of times this script has been executed */
-  runCount: number;
-  /** When the script was added (ISO string) */
-  createdAt: string;
-  /** Last time the script was executed (ISO string) */
-  lastRun: string | null;
-}
+export type Script = B.Script;
 
 /**
  * Sort options for scripts list

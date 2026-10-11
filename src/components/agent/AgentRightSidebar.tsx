@@ -5,9 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useSettings } from '@/components/settings-context';
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import type { AgentSettings } from '@/types/agent';
 import type { MCPManagerState } from '@/lib/mcp-manager';
+import { commands } from '@/bindings';
+import { toolSummary as buildToolSummary } from '@/lib/agent-tools';
 
 interface AgentRightSidebarProps {
   className?: string;
@@ -27,15 +27,7 @@ function AgentInfoPanel({
   toolSummary?: Array<{ id: string; name: string; desc: string; enabled: boolean; requiresApproval?: boolean }>;
 }) {
   const { settings } = useSettings();
-  const agentSettings = settings.agent as AgentSettings | undefined;
-
-  const tools = toolSummary || [
-    { id: 'execute_command', name: 'Commands', desc: 'Execute PowerShell', enabled: true },
-    { id: 'files', name: 'Files', desc: 'Read, write, copy, move', enabled: true },
-    { id: 'get_system_info', name: 'System Info', desc: 'Hardware & OS details', enabled: true },
-    { id: 'search_web', name: 'Web Search', desc: 'Search the internet', enabled: agentSettings?.searchProvider !== 'none' },
-    { id: 'list_programs', name: 'Programs', desc: 'List portable tools', enabled: true },
-  ];
+  const tools = toolSummary ?? buildToolSummary(settings.agent);
 
   const mcpServerCount = mcpState?.servers?.length || 0;
   const mcpToolCount = mcpState?.toolCount || 0;
@@ -136,7 +128,7 @@ function AgentInfoPanel({
       <div>
         <h3 className="text-sm font-medium mb-1">Model</h3>
         <p className="text-xs text-muted-foreground font-mono bg-muted/40 px-2 py-1.5 rounded-md">
-          {agentSettings?.model || 'Not configured'}
+          {settings.agent?.model || 'Not configured'}
         </p>
       </div>
     </div>
@@ -151,7 +143,7 @@ function ProgramList() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<Array<Record<string, string>>>('list_agent_programs')
+    commands.listAgentPrograms()
       .then(setPrograms)
       .catch(console.error)
       .finally(() => setLoading(false));

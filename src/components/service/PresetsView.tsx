@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Wrench,
   ChevronRight,
@@ -27,6 +26,7 @@ import {
 
 import type { ServicePreset, ServiceDefinition } from '@/types/service';
 import { getIcon, PRESET_GRADIENTS } from './utils';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Category Colors
@@ -67,9 +67,7 @@ export function PresetsView({ presets, definitions, onSelectPreset }: PresetsVie
         const enabledIds = preset.services.filter(s => s.enabled).map(s => s.serviceId);
         if (enabledIds.length === 0) continue;
         try {
-          const missing = await invoke<Record<string, string[]>>('validate_service_requirements', {
-            serviceIds: enabledIds,
-          });
+          const missing = await commands.validateServiceRequirements(enabledIds);
           const count = Object.keys(missing).length;
           if (count > 0) results[preset.id] = count;
         } catch {

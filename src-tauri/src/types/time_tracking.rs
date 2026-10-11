@@ -17,7 +17,7 @@ use std::collections::HashMap;
 // =============================================================================
 
 /// Network connection type for I/O-bound task estimation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum NetworkType {
@@ -27,7 +27,6 @@ pub enum NetworkType {
     #[default]
     Unknown,
 }
-
 
 impl NetworkType {
     /// Convert to regression input value (higher = faster)
@@ -42,7 +41,7 @@ impl NetworkType {
 }
 
 /// Extended PC specifications for correlation with execution times
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PcFingerprint {
     // === Core Specs ===
@@ -158,7 +157,7 @@ impl PcFingerprint {
 // =============================================================================
 
 /// A single recorded service execution time
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceTimeSample {
     /// Service that was run
@@ -183,7 +182,7 @@ pub struct ServiceTimeSample {
 // =============================================================================
 
 /// Feature normalization statistics (mean/std for Z-score)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureNormalization {
     pub means: Vec<f64>,
@@ -191,7 +190,7 @@ pub struct FeatureNormalization {
 }
 
 /// Trained Ridge regression weights for a service
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceModelWeights {
     /// Y-intercept (base time in ms)
@@ -214,7 +213,7 @@ pub struct ServiceModelWeights {
 // =============================================================================
 
 /// Aggregated statistics for a single service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceTimeStats {
     /// Service ID
@@ -246,7 +245,7 @@ pub struct ServiceTimeStats {
 // =============================================================================
 
 /// Aggregated statistics for a preset
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetTimeStats {
     /// Preset ID
@@ -271,7 +270,7 @@ pub struct PresetTimeStats {
 pub const METRICS_VERSION: &str = "2.0.0";
 
 /// Complete service time metrics data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceTimeMetrics {
     /// Schema version for migration
@@ -308,43 +307,6 @@ impl Default for ServiceTimeMetrics {
             max_samples_per_service: 100,
             samples_since_retrain: HashMap::new(),
             retrain_batch_size: 5,
-        }
-    }
-}
-
-// =============================================================================
-// Settings Integration
-// =============================================================================
-
-/// Service metrics settings (for user preferences)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceMetricsSettings {
-    /// Whether to collect timing data
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    /// Show estimated times in queue view
-    #[serde(default = "default_show_estimates")]
-    pub show_estimates: bool,
-    /// Maximum samples to retain per service
-    #[serde(default = "default_max_samples")]
-    pub max_samples_per_service: usize,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_show_estimates() -> bool {
-    true
-}
-
-impl Default for ServiceMetricsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            show_estimates: true,
-            max_samples_per_service: 100,
         }
     }
 }

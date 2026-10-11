@@ -5,16 +5,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -39,33 +35,15 @@ impl Service for AdwCleanerService {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "adwcleaner";
-
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting AdwCleaner cleanup...", &mut logs, app);
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
+        ctx.log("Starting AdwCleaner cleanup...");
 
         // Get AdwCleaner executable path
         let exe_path = match get_program_exe_path("adwcleaner".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                emit_log("ERROR: AdwCleaner.exe not found", &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log("ERROR: AdwCleaner.exe not found");
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "AdwCleaner Not Found".to_string(),
                     description: "AdwCleaner executable was not found.".to_string(),
@@ -75,39 +53,15 @@ impl Service for AdwCleanerService {
                     ),
                     data: Some(json!({"type": "error", "reason": "exe_not_found"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("AdwCleaner.exe not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("AdwCleaner.exe not found".to_string()));
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to locate AdwCleaner: {}", e),
-                    &mut logs,
-                    app,
-                );
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                ctx.log(format!("ERROR: Failed to locate AdwCleaner: {}", e));
+                return ctx.finish(false, Some(e.to_string()));
             }
         };
 
-        emit_log(
-            &format!("Found AdwCleaner at: {}", exe_path),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("Found AdwCleaner at: {}", exe_path));
 
         // Working directory for AdwCleaner output
         let working_dir = Path::new(&exe_path)
@@ -123,22 +77,18 @@ impl Service for AdwCleanerService {
         let working_dir_str = working_dir.to_string_lossy().to_string();
         let args = vec!["/eula", "/clean", "/noreboot", "/path", &working_dir_str];
 
-        emit_log("Running AdwCleaner cleanup...", &mut logs, app);
+        ctx.log("Running AdwCleaner cleanup...");
 
         // Execute AdwCleaner
-        let output = match Command::new(&exe_path)
-            .args(&args)
-            .current_dir(&working_dir)
-            .output()
-        {
+        let output = match ctx.output(
+            crate::proc::command(&exe_path)
+                .args(&args)
+                .current_dir(&working_dir),
+        ) {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to execute AdwCleaner: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to execute AdwCleaner: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Execution Failed".to_string(),
                     description: format!("Failed to run AdwCleaner: {}", e),
@@ -147,32 +97,19 @@ impl Service for AdwCleanerService {
                     ),
                     data: Some(json!({"type": "error", "reason": "execution_failed"})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Execution failed: {}", e)));
             }
         };
 
         let exit_code = output.status.code().unwrap_or(-1);
-        emit_log(
-            &format!("AdwCleaner completed with exit code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "AdwCleaner completed with exit code: {}",
+            exit_code
+        ));
 
         if exit_code != 0 {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            emit_log(
-                &format!("AdwCleaner error output: {}", stderr.trim()),
-                &mut logs,
-                app,
-            );
+            let stderr = crate::proc::decode_output(&output.stderr);
+            ctx.log(format!("AdwCleaner error output: {}", stderr.trim()));
         }
 
         // Find and parse the latest log file
@@ -181,30 +118,18 @@ impl Service for AdwCleanerService {
 
         let parsed = match latest_log {
             Some(log_path) => {
-                emit_log(
-                    &format!("Parsing log file: {}", log_path.display()),
-                    &mut logs,
-                    app,
-                );
+                ctx.log(format!("Parsing log file: {}", log_path.display()));
                 parse_adwcleaner_log(&log_path)
             }
             None => {
-                emit_log(
-                    "No log file found, using exit code result only",
-                    &mut logs,
-                    app,
-                );
+                ctx.log("No log file found, using exit code result only");
                 AdwCleanerResult::default()
             }
         };
 
         // Log summary
-        emit_log(
-            &format!("Items cleaned: {}", parsed.cleaned),
-            &mut logs,
-            app,
-        );
-        emit_log(&format!("Items failed: {}", parsed.failed), &mut logs, app);
+        ctx.log(format!("Items cleaned: {}", parsed.cleaned));
+        ctx.log(format!("Items failed: {}", parsed.failed));
 
         // Determine overall severity
         let (severity, status) = if parsed.cleaned > 0 {
@@ -263,7 +188,7 @@ impl Service for AdwCleanerService {
         }
 
         // Create summary finding
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: severity.clone(),
             title: status.to_string(),
             description: format!(
@@ -308,7 +233,7 @@ impl Service for AdwCleanerService {
 
         for (category, count) in category_counts {
             if count > 0 {
-                findings.push(ServiceFinding {
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Info,
                     title: format!("{}: {} found", category, count),
                     description: format!("AdwCleaner identified {} {} to clean.", count, category.to_lowercase()),
@@ -321,7 +246,7 @@ impl Service for AdwCleanerService {
         // Browser findings
         for (browser, items) in &parsed.browsers {
             if !items.is_empty() {
-                findings.push(ServiceFinding {
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Info,
                     title: format!("{}: {} items", browser, items.len()),
                     description: format!("Browser-related items cleaned from {}.", browser),
@@ -331,17 +256,9 @@ impl Service for AdwCleanerService {
             }
         }
 
-        emit_log("AdwCleaner cleanup complete", &mut logs, app);
+        ctx.log("AdwCleaner cleanup complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: exit_code == 0,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(exit_code == 0, None)
     }
 }
 
@@ -441,7 +358,9 @@ fn parse_adwcleaner_log(log_path: &Path) -> AdwCleanerResult {
         if let Some(ref re) = re_section {
             if let Some(caps) = re.captures(line) {
                 let section_name = caps.get(1).map_or("", |m| m.as_str()).trim();
-                if section_map.contains_key(section_name) || browser_sections.contains(&section_name) {
+                if section_map.contains_key(section_name)
+                    || browser_sections.contains(&section_name)
+                {
                     current_section = Some(section_name);
                 } else {
                     current_section = None;

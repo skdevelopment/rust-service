@@ -15,11 +15,13 @@ name = "rustservice_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+# Keep the tauri crate on the same minor as @tauri-apps/api in package.json,
+# otherwise `tauri build` refuses to run (version mismatch check).
+tauri = { version = "2.12", features = [] }
+tauri-plugin-opener = "2.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = { version = "0.37", features = [
@@ -35,29 +37,27 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 image = "0.25"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-log = "2"
+log = "0.4"
 base64 = "0.22"
 regex = "1.12.2"
 glob = "0.3"
 dirs = "5"
 
-# Agent memory database
+# Agent conversation / command-history database
 rusqlite = { version = "0.32", features = ["bundled"] }
-zerocopy = "0.8"                                        # For efficient vector serialization
 urlencoding = "2"                                       # For URL encoding in search queries
-gethostname = "0.4"                                     # For machine identification in portable memory system
-tracing = "0.1"                                         # For structured logging
 sha2 = "0.10"                                           # For SHA-256 checksums
 hex = "0.4"                                             # For hex encoding
-mime_guess = "2"                                        # For MIME type detection from file extension
 
 # MCP Server
-rmcp = { version = "0.1", features = ["server"] }
-schemars = "0.8"                                        # Required for tool JSON schema generation
 hyper = { version = "1", features = ["server", "http1"] }  # HTTP types
 hyper-util = { version = "0.1", features = ["tokio"] }  # HTTP server utilities  
 http-body-util = "0.1"                                  # HTTP body utilities
-tower-http = { version = "0.6", features = ["cors"] }   # CORS for web clients
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+specta = { version = "=2.0.0-rc.25", features = ["serde_json", "chrono"] }
+specta-typescript = "=0.0.12"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = [
@@ -67,5 +67,7 @@ winapi = { version = "0.3", features = [
     "libloaderapi",
     "winbase",
     "winver",
+    "stringapiset",
+    "winnls",
 ] }
 widestring = "1.0"

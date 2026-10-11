@@ -3,16 +3,12 @@
 //! Runs `ipconfig /all` and `netsh interface show interface` to gather
 //! detailed network adapter configuration, DNS, DHCP, and gateway info.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -35,7 +31,7 @@ impl Service for NetworkConfigService {
             options: vec![ServiceOptionSchema {
                 id: "include_disabled".to_string(),
                 label: "Include Disabled Adapters".to_string(),
-                option_type: "boolean".to_string(),
+                option_type: OptionType::Boolean,
                 default_value: json!(false),
                 min: None,
                 max: None,
@@ -48,79 +44,47 @@ impl Service for NetworkConfigService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "network-config";
-
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let include_disabled = options
             .get("include_disabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        emit_log("Running network configuration analysis...", &mut logs, app);
+        ctx.log("Running network configuration analysis...");
 
         // Run ipconfig /all
-        emit_log(
-            "Gathering adapter details (ipconfig /all)...",
-            &mut logs,
-            app,
-        );
-        let ipconfig_output = match Command::new("ipconfig").arg("/all").output() {
+        ctx.log("Gathering adapter details (ipconfig /all)...");
+        let ipconfig_output = match ctx.output(crate::proc::command("ipconfig").arg("/all")) {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                emit_log(
-                    &format!(
-                        "ipconfig exited with code: {}",
-                        output.status.code().unwrap_or(-1)
-                    ),
-                    &mut logs,
-                    app,
-                );
+                let stdout = crate::proc::decode_output(&output.stdout).to_string();
+                ctx.log(format!(
+                    "ipconfig exited with code: {}",
+                    output.status.code().unwrap_or(-1)
+                ));
                 stdout
             }
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run ipconfig: {}", e),
-                    &mut logs,
-                    app,
-                );
+                ctx.log(format!("ERROR: Failed to run ipconfig: {}", e));
                 String::new()
             }
         };
 
         // Run netsh to get adapter status
-        emit_log(
-            "Checking adapter status (netsh interface show interface)...",
-            &mut logs,
-            app,
-        );
-        let netsh_output = match Command::new("netsh")
-            .args(["interface", "show", "interface"])
-            .output()
-        {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+        ctx.log("Checking adapter status (netsh interface show interface)...");
+        let netsh_output = match ctx.output(crate::proc::command("netsh").args([
+            "interface",
+            "show",
+            "interface",
+        ])) {
+            Ok(output) => crate::proc::decode_output(&output.stdout).to_string(),
             Err(e) => {
-                emit_log(&format!("Warning: netsh failed: {}", e), &mut logs, app);
+                ctx.log(format!("Warning: netsh failed: {}", e));
                 String::new()
             }
         };
 
         // Also get DNS cache stats
-        emit_log("Checking DNS configuration...", &mut logs, app);
+        ctx.log("Checking DNS configuration...");
 
         // Parse adapters from ipconfig
         let mut adapters = parse_ipconfig(&ipconfig_output);
@@ -150,16 +114,12 @@ impl Service for NetworkConfigService {
             .filter(|a| !a.ipv6_address.is_empty())
             .collect();
 
-        emit_log(
-            &format!(
-                "Found {} adapters, {} connected, {} with IPv6",
-                total_adapters,
-                connected.len(),
-                has_ipv6.len()
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Found {} adapters, {} connected, {} with IPv6",
+            total_adapters,
+            connected.len(),
+            has_ipv6.len()
+        ));
 
         // Analyze DNS servers
         let mut dns_analysis = Vec::new();
@@ -250,7 +210,7 @@ impl Service for NetworkConfigService {
             }
         );
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -279,7 +239,7 @@ impl Service for NetworkConfigService {
         });
 
         if uses_isp_dns && !connected.is_empty() {
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Info,
                 title: "Using ISP DNS Servers".to_string(),
                 description:
@@ -293,17 +253,9 @@ impl Service for NetworkConfigService {
             });
         }
 
-        emit_log("Network configuration analysis complete.", &mut logs, app);
+        ctx.log("Network configuration analysis complete.");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 

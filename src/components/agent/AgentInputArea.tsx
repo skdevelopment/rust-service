@@ -6,7 +6,6 @@
  */
 
 import { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Send,
   Loader2,
@@ -18,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { FileAttachment } from '@/types/file-attachment';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Types
@@ -27,6 +27,8 @@ interface AgentInputAreaProps {
   input: string;
   onInputChange: (value: string) => void;
   isLoading: boolean;
+  /** The agent is waiting for approve/deny on a pending action */
+  awaitingApproval?: boolean;
   hasMessages: boolean;
   onSend: (text: string, attachments?: FileAttachment[]) => Promise<void>;
   onStop: () => void;
@@ -41,6 +43,7 @@ export function AgentInputArea({
   input,
   onInputChange,
   isLoading,
+  awaitingApproval = false,
   hasMessages,
   onSend,
   onStop,
@@ -76,12 +79,7 @@ export function AgentInputArea({
             reader.readAsDataURL(file);
           });
 
-          const attachment = await invoke<FileAttachment>('save_uploaded_file', {
-            file_name: file.name,
-            mime_type: file.type || 'application/octet-stream',
-            size: file.size,
-            content_base64: base64,
-          });
+          const attachment = await commands.saveUploadedFile(file.name, file.type || 'application/octet-stream', file.size, base64);
 
           newAttachments.push(attachment);
         } catch (error) {
@@ -99,6 +97,8 @@ export function AgentInputArea({
   const handleSendMessage = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
+      // Keep the draft while the agent is busy instead of silently dropping it.
+      if (isLoading) return;
       if (!input.trim() && pendingAttachments.length === 0) return;
       const text =
         input.trim() ||
@@ -108,7 +108,7 @@ export function AgentInputArea({
       setPendingAttachments([]);
       await onSend(text, attachments);
     },
-    [input, pendingAttachments, onInputChange, onSend],
+    [input, isLoading, pendingAttachments, onInputChange, onSend],
   );
 
   const handleKeyDown = useCallback(
@@ -153,13 +153,15 @@ export function AgentInputArea({
               onChange={e => onInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                pendingAttachments.length > 0
-                  ? 'Add a message about these files...'
-                  : 'Ask ServiceAgent...'
+                awaitingApproval
+                  ? 'Approve or deny the pending action above to continue...'
+                  : pendingAttachments.length > 0
+                    ? 'Add a message about these files...'
+                    : 'Ask ServiceAgent...'
               }
               className="min-h-[44px] max-h-32 resize-none pr-12 bg-background flex-1"
               rows={1}
-              disabled={isUploading}
+              disabled={isUploading || awaitingApproval}
             />
 
             {/* File Upload Button */}

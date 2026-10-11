@@ -4,12 +4,11 @@ use chrono::Utc;
 use rusqlite::params;
 use uuid::Uuid;
 
-use super::{
-    get_db_connection, Conversation, ConversationMessage, ConversationWithMessages,
-};
+use super::{get_db_connection, Conversation, ConversationMessage, ConversationWithMessages};
 
 /// Create a new conversation
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn create_conversation(title: Option<String>) -> Result<Conversation, String> {
     let conn = get_db_connection()?;
     let id = Uuid::new_v4().to_string();
@@ -31,7 +30,8 @@ pub fn create_conversation(title: Option<String>) -> Result<Conversation, String
 }
 
 /// List all conversations
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn list_conversations(limit: Option<usize>) -> Result<Vec<Conversation>, String> {
     let conn = get_db_connection()?;
     let limit_val = limit.unwrap_or(50) as i64;
@@ -67,7 +67,8 @@ pub fn list_conversations(limit: Option<usize>) -> Result<Vec<Conversation>, Str
 }
 
 /// Get a conversation with its messages
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn get_conversation(conversation_id: String) -> Result<ConversationWithMessages, String> {
     let conn = get_db_connection()?;
 
@@ -93,7 +94,7 @@ pub fn get_conversation(conversation_id: String) -> Result<ConversationWithMessa
             "SELECT id, conversation_id, role, content, created_at
              FROM conversation_messages
              WHERE conversation_id = ?1
-             ORDER BY created_at ASC",
+             ORDER BY rowid ASC",
         )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -121,24 +122,29 @@ pub fn get_conversation(conversation_id: String) -> Result<ConversationWithMessa
 }
 
 /// Save messages to a conversation (replaces existing messages)
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn save_conversation_messages(
     conversation_id: String,
     messages: Vec<ConversationMessage>,
 ) -> Result<(), String> {
-    let conn = get_db_connection()?;
+    let mut conn = get_db_connection()?;
     let now = Utc::now().to_rfc3339();
 
-    // Delete existing messages for this conversation
-    conn.execute(
+    // Replace the whole history atomically; rows are read back in insertion
+    // (rowid) order, so the saved order is the conversation order.
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("Failed to start transaction: {}", e))?;
+
+    tx.execute(
         "DELETE FROM conversation_messages WHERE conversation_id = ?1",
         params![conversation_id],
     )
     .map_err(|e| format!("Failed to delete old messages: {}", e))?;
 
-    // Insert new messages
     for msg in messages {
-        conn.execute(
+        tx.execute(
             "INSERT INTO conversation_messages (id, conversation_id, role, content, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -152,18 +158,19 @@ pub fn save_conversation_messages(
         .map_err(|e| format!("Failed to insert message: {}", e))?;
     }
 
-    // Update conversation's updated_at
-    conn.execute(
+    tx.execute(
         "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
         params![now, conversation_id],
     )
     .map_err(|e| format!("Failed to update conversation: {}", e))?;
 
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("Failed to save conversation: {}", e))
 }
 
 /// Update conversation title
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn update_conversation_title(conversation_id: String, title: String) -> Result<(), String> {
     let conn = get_db_connection()?;
     let now = Utc::now().to_rfc3339();
@@ -178,7 +185,8 @@ pub fn update_conversation_title(conversation_id: String, title: String) -> Resu
 }
 
 /// Delete a conversation and its messages
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn delete_conversation(conversation_id: String) -> Result<(), String> {
     let conn = get_db_connection()?;
 

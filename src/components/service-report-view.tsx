@@ -8,7 +8,6 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { useReactToPrint } from 'react-to-print';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Wrench,
   ArrowLeft,
@@ -32,6 +31,7 @@ import { useSettings } from '@/components/settings-context';
 import { isAiConfigured, aiSummarizeReport } from '@/lib/ai-features';
 import { PrintableReport } from '@/components/service-report/PrintableReport';
 import { FindingsContent } from '@/components/service-report/FindingsContent';
+import { commands } from '@/bindings';
 
 // =============================================================================
 // Main Service Report View Component
@@ -87,8 +87,8 @@ export function ServiceReportView({
       const result = await aiSummarizeReport(localReport, definitions, settings.agent);
 
       // Persist to backend
-      await invoke('set_report_summary', { report_id: localReport.id, summary: result.summary });
-      await invoke('set_report_health_score', { report_id: localReport.id, score: result.healthScore });
+      await commands.setReportSummary(localReport.id, result.summary);
+      await commands.setReportHealthScore(localReport.id, result.healthScore ?? null);
 
       // Update local state (immutable)
       setLocalReport((prev) => ({
@@ -178,7 +178,6 @@ export function ServiceReportView({
               <ScrollArea className="flex-1 min-h-0 px-4 py-4">
               <FindingsContent
                 report={localReport}
-                definitions={definitions}
                 definitionMap={definitionMap}
                 aiSummaryLoading={aiSummaryLoading}
                 aiSummaryError={aiSummaryError}

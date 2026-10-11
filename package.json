@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -36,9 +38,9 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.18",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "~2.4.2",
-    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/api": "~2.12.2",
+    "@tauri-apps/plugin-dialog": "~2.8.1",
+    "@tauri-apps/plugin-opener": "~2.7.0",
     "@types/node": "^25.0.1",
     "ai": "^5.0.114",
     "class-variance-authority": "^0.7.1",
@@ -58,12 +60,17 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "~2.12.1",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^10.0.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.0.0",
     "shadcn": "^3.6.1",
-    "typescript": "~5.6.2",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.1",
     "vite": "^6.0.3"
   }
 }

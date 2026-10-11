@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { Wrench } from 'lucide-react';
 
 import type {
@@ -17,6 +16,8 @@ import type { BusinessSettings } from '@/types/settings';
 import { getServiceRenderer } from '@/components/service-renderers';
 import { getIcon } from '@/components/service/utils';
 import { categoryLabels } from '@/components/service-report/report-constants';
+import { commands } from '@/bindings';
+import { resultKey } from '@/types/service';
 
 export interface PrintableReportProps {
   report: ServiceReport;
@@ -32,7 +33,7 @@ export function PrintableReport({ report, definitions, variant, businessSettings
   // Load business logo
   useEffect(() => {
     if (businessSettings?.logoPath) {
-      invoke<string | null>('get_business_logo', { logoPath: businessSettings.logoPath })
+      commands.getBusinessLogo(businessSettings.logoPath)
         .then(url => setLogoUrl(url))
         .catch(() => setLogoUrl(null));
     } else {
@@ -62,7 +63,6 @@ export function PrintableReport({ report, definitions, variant, businessSettings
       <CustomerReport
         report={report}
         definitions={definitions}
-        definitionMap={definitionMap}
         findingsByCategory={findingsByCategory}
         businessSettings={businessSettings}
         logoUrl={logoUrl}
@@ -103,10 +103,10 @@ export function PrintableReport({ report, definitions, variant, businessSettings
       </div>
 
       {/* Service Results */}
-      {report.results.map((result) => {
+      {report.results.map((result, i) => {
         const def = definitionMap.get(result.serviceId);
         return (
-          <div key={result.serviceId} className="mb-6">
+          <div key={resultKey(result, i)} className="mb-6">
             <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-200">
               <span className={result.success ? 'text-green-500' : 'text-red-500'}>
                 {result.success ? '\u2713' : '\u2717'}
@@ -147,7 +147,6 @@ export function PrintableReport({ report, definitions, variant, businessSettings
 interface CustomerReportProps {
   report: ServiceReport;
   definitions: ServiceDefinition[];
-  definitionMap: Map<string, ServiceDefinition>;
   findingsByCategory: Record<string, { result: ServiceReport['results'][0]; definition: ServiceDefinition | undefined }[]>;
   businessSettings?: BusinessSettings;
   logoUrl: string | null;
@@ -160,7 +159,6 @@ interface CustomerReportProps {
 
 function CustomerReport({
   report,
-  definitionMap,
   findingsByCategory,
   businessSettings,
   logoUrl,
@@ -275,14 +273,14 @@ function CustomerReport({
             {categoryLabels[category] || category}
           </h2>
           <div className="space-y-3">
-            {items.map(({ result, definition }) => {
+            {items.map(({ result, definition }, i) => {
               const CustomRenderer = getServiceRenderer(result.serviceId);
 
               // Use custom customer renderer if available
               if (CustomRenderer && definition) {
                 return (
                   <CustomRenderer
-                    key={result.serviceId}
+                    key={resultKey(result, i)}
                     result={result}
                     definition={definition}
                     variant="customer"
@@ -296,7 +294,7 @@ function CustomerReport({
 
               return (
                 <div
-                  key={result.serviceId}
+                  key={resultKey(result, i)}
                   className="p-4 border border-gray-200 rounded-lg bg-white"
                 >
                   <div className="flex items-start gap-3">

@@ -2,40 +2,21 @@
 //!
 //! This module contains all the Tauri commands exposed to the frontend.
 
-mod agent;
-mod bluescreen;
-mod data_dir;
-mod disk_health;
-mod event_log;
-mod network;
-mod network_diagnostics;
-mod programs;
-mod required_programs;
+pub(crate) mod agent;
+pub(crate) mod bluescreen;
+pub(crate) mod data_dir;
+pub(crate) mod disk_health;
+pub(crate) mod event_log;
+pub(crate) mod network;
+pub(crate) mod network_diagnostics;
+pub(crate) mod programs;
+pub(crate) mod required_programs;
 pub(crate) mod restore_points;
-mod scripts;
-mod services;
-mod settings;
-mod shortcuts;
+pub(crate) mod scripts;
+pub(crate) mod services;
+pub(crate) mod settings;
+pub(crate) mod shortcuts;
 pub(crate) mod startup;
-mod system_info;
-mod time_tracking;
-mod utils;
-
-pub use agent::*;
-pub use bluescreen::*;
-pub use data_dir::*;
-pub use disk_health::*;
-pub use event_log::*;
-pub use network::*;
-pub use network_diagnostics::*;
-pub use programs::*;
-pub use required_programs::*;
-pub use restore_points::*;
-pub use scripts::*;
-pub use services::*;
-pub use settings::*;
-pub use shortcuts::*;
-pub use startup::*;
-pub use system_info::*;
-pub use time_tracking::*;
-pub use utils::*;
+pub(crate) mod system_info;
+pub(crate) mod time_tracking;
+pub(crate) mod utils;

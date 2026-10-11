@@ -17,7 +17,8 @@ use std::process::Command;
 /// - Device Manager: command="devmgmt.msc", args=None
 /// - Disk Management: command="diskmgmt.msc", args=None
 /// - PowerShell Admin: command="powershell", run_as_admin=true
-#[tauri::command]
+#[tauri::command(async)]
+#[specta::specta]
 pub fn open_shortcut(
     command: String,
     args: Option<Vec<String>>,
@@ -44,7 +45,8 @@ pub fn open_shortcut(
             }
         }
 
-        Command::new("powershell")
+        // Hidden helper; Start-Process opens the elevated program's own window.
+        crate::proc::command("powershell")
             .args(&ps_args)
             .spawn()
             .map_err(|e| format!("Failed to launch {} as admin: {}", command, e))?;

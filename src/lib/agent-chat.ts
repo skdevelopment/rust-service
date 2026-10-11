@@ -8,10 +8,9 @@
 import {
   streamText,
   stepCountIs,
-  type CoreMessage,
   type LanguageModel,
+  type ModelMessage,
   type ToolSet,
-  type TextStreamPart,
 } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -19,12 +18,14 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createXai } from "@ai-sdk/xai";
 import { createGroq } from "@ai-sdk/groq";
-import type {
-  AgentSettings,
-  AgentProvider,
-  ProviderApiKeys,
+import {
+  AGENT_PROVIDERS,
+  type AgentSettings,
+  type AgentProvider,
+  type ProviderApiKeys,
 } from "@/types/agent";
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from '@/bindings';
+import { enabledTools } from '@/lib/agent-tools';
 
 // =============================================================================
 // Provider Configuration
@@ -37,6 +38,18 @@ const PROVIDER_BASE_URLS: Partial<Record<AgentProvider, string>> = {
   deepseek: "https://api.deepseek.com",
   openrouter: "https://openrouter.ai/api/v1",
 };
+
+/**
+ * Whether the selected provider has everything it needs to chat
+ */
+export function isAgentConfigured(settings: AgentSettings | undefined): boolean {
+  if (!settings || !settings.model?.trim()) return false;
+  const info = AGENT_PROVIDERS.find(p => p.id === settings.provider);
+  const key = settings.apiKeys?.[settings.provider as keyof ProviderApiKeys];
+  if ((info?.requiresApiKey ?? true) && !key?.trim()) return false;
+  if (info?.requiresBaseUrl && !settings.baseUrl?.trim()) return false;
+  return true;
+}
 
 /**
  * Create a language model instance based on provider settings
@@ -127,7 +140,7 @@ export function createProviderModel(settings: AgentSettings): LanguageModel {
 // =============================================================================
 
 export interface StreamChatOptions {
-  messages: CoreMessage[];
+  messages: ModelMessage[];
   settings: AgentSettings;
   tools?: ToolSet;
   systemPrompt?: string;
@@ -136,11 +149,8 @@ export interface StreamChatOptions {
   maxSteps?: number;
 }
 
-export interface StreamChatResult {
-  textStream: AsyncIterable<string>;
-  fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
-  fullText: Promise<string>;
-}
+/** The streamText result: consume `fullStream`, then read `response`. */
+export type StreamChatResult = ReturnType<typeof streamText>;
 
 /**
  * Default system prompt for the agent
@@ -167,41 +177,6 @@ You are an AGENTIC assistant. This means:
 You can use **multiple tools per step** when they are independent and don't depend on each other's results (e.g., reading two files at once, checking disk health and network status simultaneously).
 
 However, always **analyze results before deciding next actions** — don't blindly chain steps without reviewing output. For dependent operations, execute sequentially across steps so you can adapt your approach based on results.
-
-## Available Tools
-
-### execute_command
-Execute PowerShell commands. The user approves before execution.
-- ALWAYS use PowerShell syntax: Get-ChildItem (not ls), Get-Process (not ps), Select-Object (not select)
-- Chain commands with semicolons (;) not &&
-- Use Format-Table -AutoSize for readable tabular output
-- Quote paths with spaces: "$env:USERPROFILE\\Downloads"
-- Use -ErrorAction SilentlyContinue when checking things that might not exist
-- For large outputs, pipe to Select-Object -First N to limit results
-
-### read_file
-Read text file contents. Great for logs, configs, scripts.
-
-### write_file
-Create or overwrite files. Requires user approval.
-
-### list_dir
-List directory contents with name, type, and size.
-
-### move_file / copy_file
-Move, rename, or copy files. Requires approval.
-
-### search_web
-Search the internet for solutions, documentation, error fixes.
-
-### list_programs
-List portable tools in the programs folder.
-
-### list_instruments / run_instrument
-List and run custom technician scripts.
-
-### get_system_info
-Get detailed hardware/OS info (CPU, RAM, disks, GPU, network).
 
 ## Thinking Process
 
@@ -262,7 +237,7 @@ You can run diagnostic and maintenance services on the system. Services are modu
 4. **Execute**: Use \`run_service_queue\` to start the run (user must approve)
 5. **Supervise**: You'll receive updates as each service completes — monitor for issues
 6. **Intervene**: If a service fails or reports critical findings, use \`pause_service\` and investigate
-7. **Report**: After completion, review all findings, write analysis, and generate a PDF
+7. **Report**: After completion, review all findings, write analysis, and export the report
 
 ### Supervision Protocol
 When monitoring a running service queue:
@@ -280,8 +255,8 @@ After a service run completes:
 4. Edit findings if needed with \`edit_finding\` (make customer-friendly)
 5. Write an executive summary with \`set_report_summary\`
 6. Set a health score with \`set_health_score\` (0-100)
-7. Generate the final report with \`generate_report_pdf\`
-8. Present the PDF path to the user with key findings summarized
+7. Export a text copy with \`export_report\` if the technician wants a file (printable PDFs come from the Reports page)
+8. Summarize the key findings for the technician
 
 ### Symptom-to-Service Mapping
 When users describe problems, map their symptoms to appropriate services:
@@ -293,147 +268,127 @@ When users describe problems, map their symptoms to appropriate services:
 - **Disk issues**: disk-space, smartctl, chkdsk, bleachbit, drivecleanup
 - **General checkup**: ping-test, disk-space, sfc, dism, driver-audit, smartctl, network-config`;
 
+/** Tool list for the system prompt, generated from the tool registry */
+function toolsSection(settings: AgentSettings): string {
+  const lines = enabledTools(settings).map(t =>
+    `- **${t.name}**: ${t.summary}${t.approval === 'auto' ? '' : ' (requires approval)'}`,
+  );
+  return `\n\n## Available Tools\n${lines.join('\n')}`;
+}
+
 /**
  * Stream a chat response from the AI provider
  */
-export async function streamChat(
-  options: StreamChatOptions,
-): Promise<StreamChatResult> {
+export async function streamChat(options: StreamChatOptions): Promise<StreamChatResult> {
   const { messages, settings, tools, abortSignal, maxSteps = 10 } = options;
 
-  let { systemPrompt } = options;
-  if (!systemPrompt)
-    systemPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  let systemPrompt = (options.systemPrompt || settings.systemPrompt || DEFAULT_SYSTEM_PROMPT) + toolsSection(settings);
 
-  // Fetch dynamic context
   try {
-    const instruments = await invoke<Array<{ name: string; description: string; extension: string }>>(
-      "list_instruments",
-    ).catch(() => []);
-
-    let dynamicContext = "";
-
-    if (instruments && instruments.length > 0) {
-      dynamicContext += `\n\n## AVAILABLE CUSTOM INSTRUMENTS\nYou can run these special tools by name using 'run_instrument':\n`;
-      instruments.forEach((i) => {
-        dynamicContext += `- **${i.name}** (.${i.extension}): ${i.description}\n`;
-      });
-    }
-
-    if (dynamicContext) {
-      systemPrompt = (systemPrompt || DEFAULT_SYSTEM_PROMPT) + dynamicContext;
+    const instruments = await commands.listInstruments();
+    if (instruments.length > 0) {
+      systemPrompt += `\n\n## AVAILABLE CUSTOM INSTRUMENTS\nYou can run these special tools by name using 'run_instrument':\n`;
+      for (const i of instruments) {
+        systemPrompt += `- **${i.name}** (.${i.extension}): ${i.description}\n`;
+      }
     }
   } catch (error) {
-    console.warn("Failed to load dynamic agent context:", error);
+    console.warn("Failed to load instruments for the system prompt:", error);
   }
 
-  const model = createProviderModel(settings);
-
-  // Sanitize messages to ensure compatible format:
-  // SDK streams tool-results with input/output but expects result/isError when consuming
-  const sanitizedMessages = sanitizeMessagesForSDK(messages);
-
-  const result = streamText({
-    model,
+  return streamText({
+    model: createProviderModel(settings),
     system: systemPrompt,
-    messages: sanitizedMessages,
+    messages,
     // Only pass tools if there are any defined - some models don't support tools
     ...(tools && Object.keys(tools).length > 0 ? { tools } : {}),
-    // Enable multi-step tool calling - configurable step limit
-    // Higher limit used during service supervision (30 steps)
     stopWhen: stepCountIs(maxSteps),
     abortSignal,
   });
-
-  return {
-    textStream: result.textStream,
-    fullStream: result.fullStream,
-    fullText: result.text,
-  };
 }
 
-/**
- * Shape of a tool-result part that may come from stored history.
- * Covers both the legacy (result/isError) and current (output) SDK formats.
- */
-interface StoredToolResultPart {
-  type: string;
-  toolCallId?: string;
-  toolName?: string;
-  /** Current SDK field */
-  output?: unknown;
-  /** Legacy SDK field */
-  result?: unknown;
-  /** Legacy error flag */
-  isError?: boolean;
-}
+// =============================================================================
+// History normalization (conversations saved by older versions)
+// =============================================================================
 
-/**
- * Sanitize messages for SDK compatibility
- * The SDK now uses ModelMessage format with ToolResultPart requiring 'output' field
- * with LanguageModelV2ToolResultOutput structure
- */
-function sanitizeMessagesForSDK(messages: CoreMessage[]): CoreMessage[] {
-  return messages.map((msg) => {
-    if (msg.role === "tool" && Array.isArray(msg.content)) {
-      return {
-        ...msg,
-        content: msg.content.map((part: StoredToolResultPart) => {
-          if (part.type === "tool-result") {
-            // Extract the raw result value
-            const rawOutput = part.output ?? part.result;
-            let resultValue: string;
-            let isError = false;
+type ToolOutput =
+  | { type: 'text' | 'error-text'; value: string }
+  | { type: 'json' | 'error-json'; value: unknown };
 
-            if (rawOutput && typeof rawOutput === "object") {
-              // Check for error status or isError flag
-              isError = part.isError ?? rawOutput.status === "error";
-
-              if ("output" in rawOutput) {
-                // Unwrap { status, output } format
-                resultValue =
-                  typeof rawOutput.output === "string"
-                    ? rawOutput.output
-                    : JSON.stringify(rawOutput.output);
-              } else if ("error" in rawOutput) {
-                resultValue =
-                  typeof rawOutput.error === "string"
-                    ? rawOutput.error
-                    : JSON.stringify(rawOutput.error);
-                isError = true;
-              } else {
-                resultValue = JSON.stringify(rawOutput);
-              }
-            } else {
-              resultValue = String(rawOutput ?? "");
-            }
-
-            // Return in ModelMessage ToolResultPart format with LanguageModelV2ToolResultOutput
-            return {
-              type: "tool-result",
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              output: isError
-                ? { type: "error-text" as const, value: resultValue }
-                : { type: "text" as const, value: resultValue },
-            };
-          }
-          return part;
-        }),
-      };
+/** Convert any stored tool result shape into the SDK's ToolResultOutput. */
+function normalizeToolOutput(part: Record<string, unknown>): ToolOutput {
+  const out = part.output as Record<string, unknown> | undefined;
+  if (out && typeof out === 'object' && typeof out.type === 'string') {
+    const t = out.type;
+    if (t === 'text' || t === 'error-text') {
+      return { type: t, value: typeof out.value === 'string' ? out.value : JSON.stringify(out.value ?? '') };
     }
-    return msg;
-  });
+    if (t === 'json' || t === 'error-json') return { type: t, value: out.value ?? null };
+  }
+  // Legacy: { result, isError } or a raw value in `output`
+  const raw = part.result ?? part.output;
+  const isError = part.isError === true
+    || (raw !== null && typeof raw === 'object' && (raw as { status?: unknown }).status === 'error');
+  if (typeof raw === 'string') return { type: isError ? 'error-text' : 'text', value: raw };
+  return { type: isError ? 'error-json' : 'json', value: raw ?? null };
 }
 
 /**
- * Convert local message format to CoreMessage format
+ * Make a stored history safe to send to the SDK: legacy tool-call `args`
+ * become `input`, tool results get a valid `output`, and tool calls left
+ * without a result (e.g. the app closed mid-approval) get an error result.
  */
-export function convertToCoreMessages(
-  messages: Array<{ role: "user" | "assistant"; content: string }>,
-): CoreMessage[] {
-  return messages.map((msg) => ({
-    role: msg.role,
-    content: msg.content,
-  }));
+export function normalizeHistory(messages: unknown[]): ModelMessage[] {
+  const out: ModelMessage[] = [];
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (m && typeof m === 'object' && (m as { role?: unknown }).role === 'tool') {
+      for (const p of ((m as { content?: unknown[] }).content ?? []) as Array<Record<string, unknown>>) {
+        if (typeof p.toolCallId === 'string') answered.add(p.toolCallId);
+      }
+    }
+  }
+
+  for (const raw of messages) {
+    if (!raw || typeof raw !== 'object') continue;
+    const msg = raw as { role?: string; content?: unknown };
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      const content = (msg.content as Array<Record<string, unknown>>).map(part =>
+        part.type === 'tool-call'
+          ? { type: 'tool-call' as const, toolCallId: String(part.toolCallId), toolName: String(part.toolName), input: part.input ?? part.args ?? {} }
+          : part,
+      );
+      out.push({ role: 'assistant', content } as unknown as ModelMessage);
+      const unanswered = content.filter(
+        (p): p is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
+          p.type === 'tool-call' && !answered.has(p.toolCallId as string),
+      );
+      if (unanswered.length > 0) {
+        out.push({
+          role: 'tool',
+          content: unanswered.map(c => ({
+            type: 'tool-result' as const,
+            toolCallId: c.toolCallId,
+            toolName: c.toolName,
+            output: { type: 'error-text' as const, value: 'Not run: the conversation ended before this action was approved.' },
+          })),
+        });
+      }
+    } else if (msg.role === 'tool' && Array.isArray(msg.content)) {
+      out.push({
+        role: 'tool',
+        content: (msg.content as Array<Record<string, unknown>>)
+          .filter(p => p.type === 'tool-result')
+          .map(p => ({
+            type: 'tool-result' as const,
+            toolCallId: String(p.toolCallId),
+            toolName: String(p.toolName),
+            output: normalizeToolOutput(p),
+          })),
+      } as ModelMessage);
+    } else if (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'system') {
+      out.push(msg as ModelMessage);
+    }
+  }
+  return out;
 }

@@ -1,0 +1,75 @@
+/* =============================================================================
+   Circuit Theme (Electric teal on dark slate — diagnostic scanner)
+   Apply with: .theme-circuit on <html>
+   ============================================================================= */
+
+.theme-circuit {
+  --background: #f0f7f6;
+  --foreground: #0f1419;
+  --card: #ffffff;
+  --card-foreground: #0f1419;
+  --popover: #ffffff;
+  --popover-foreground: #0f1419;
+  --primary: #22b8a0;
+  --primary-foreground: #f0f7f6;
+  --secondary: #dff0ed;
+  --secondary-foreground: #0f1419;
+  --muted: #dff0ed;
+  --muted-foreground: #4a6670;
+  --accent: #d2ebe7;
+  --accent-foreground: #0f1419;
+  --destructive: #d44848;
+  --destructive-foreground: #ffffff;
+  --border: #c2ddd8;
+  --input: #d2ebe7;
+  --ring: #22b8a0;
+  --chart-1: #22b8a0;
+  --chart-2: #3dba6d;
+  --chart-3: #d4a033;
+  --chart-4: #d44848;
+  --chart-5: #6a8ec8;
+  --sidebar: #dff0ed;
+  --sidebar-foreground: #0f1419;
+  --sidebar-primary: #22b8a0;
+  --sidebar-primary-foreground: #f0f7f6;
+  --sidebar-accent: #d2ebe7;
+  --sidebar-accent-foreground: #0f1419;
+  --sidebar-border: #c2ddd8;
+  --sidebar-ring: #22b8a0;
+  --radius: 0.625rem;
+}
+
+.theme-circuit.dark {
+  --background: #0f1419;
+  --foreground: #e4eaf0;
+  --card: #151c24;
+  --card-foreground: #e4eaf0;
+  --popover: #151c24;
+  --popover-foreground: #e4eaf0;
+  --primary: #22b8a0;
+  --primary-foreground: #0a1210;
+  --secondary: #1e2a38;
+  --secondary-foreground: #e4eaf0;
+  --muted: #121920;
+  --muted-foreground: #6b8299;
+  --accent: #1e2a38;
+  --accent-foreground: #e4eaf0;
+  --destructive: #d44848;
+  --destructive-foreground: #ffffff;
+  --border: #1e2a38;
+  --input: #1e2a38;
+  --ring: #22b8a0;
+  --chart-1: #40d4bc;
+  --chart-2: #3dba6d;
+  --chart-3: #d4a033;
+  --chart-4: #e06060;
+  --chart-5: #7aa0d8;
+  --sidebar: #121920;
+  --sidebar-foreground: #e4eaf0;
+  --sidebar-primary: #22b8a0;
+  --sidebar-primary-foreground: #0a1210;
+  --sidebar-accent: #1e2a38;
+  --sidebar-accent-foreground: #e4eaf0;
+  --sidebar-border: #1e2a38;
+  --sidebar-ring: #22b8a0;
+}

@@ -6,15 +6,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::Instant;
 
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::commands::get_program_exe_path;
-use crate::services::Service;
+use crate::commands::required_programs::get_program_exe_path;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{FindingSeverity, ServiceDefinition, ServiceFinding, ServiceResult};
 
 // =============================================================================
@@ -39,57 +35,24 @@ impl Service for WhyNotWin11Service {
         }
     }
 
-    fn run(&self, _options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
+    fn run(&self, _options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let mut success = true;
         let mut error: Option<String> = None;
-        let service_id = "whynotwin11";
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log("Starting Windows 11 compatibility check...", &mut logs, app);
+        ctx.log("Starting Windows 11 compatibility check...");
 
         // Get executable path
         let exe_path = match get_program_exe_path("whynotwin11".to_string()) {
             Ok(Some(path)) => path,
             Ok(None) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("WhyNotWin11 executable not found".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("WhyNotWin11 executable not found".to_string()));
             }
             Err(e) => {
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("Failed to get executable path: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings: vec![],
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("Failed to get executable path: {}", e)));
             }
         };
 
-        emit_log(&format!("Using executable: {}", exe_path), &mut logs, app);
+        ctx.log(format!("Using executable: {}", exe_path));
 
         // Create temp CSV file path
         let work_dir = PathBuf::from(&exe_path)
@@ -99,43 +62,38 @@ impl Service for WhyNotWin11Service {
         let csv_path = work_dir.join("whynotwin11_result.csv");
 
         // Run WhyNotWin11 with CSV export
-        emit_log("Running compatibility check...", &mut logs, app);
-        let output = Command::new(&exe_path)
-            .args([
-                "/export",
-                "CSV",
-                csv_path.to_string_lossy().as_ref(),
-                "/silent",
-            ])
-            .current_dir(&work_dir)
-            .output();
+        ctx.log("Running compatibility check...");
+        let output = ctx.output(
+            crate::proc::command(&exe_path)
+                .args([
+                    "/export",
+                    "CSV",
+                    csv_path.to_string_lossy().as_ref(),
+                    "/silent",
+                ])
+                .current_dir(&work_dir),
+        );
 
         match output {
             Ok(output) => {
                 if !output.status.success() {
-                    emit_log(
-                        &format!(
-                            "Warning: Process exited with code {:?}",
-                            output.status.code()
-                        ),
-                        &mut logs,
-                        app,
-                    );
+                    ctx.log(format!(
+                        "Warning: Process exited with code {:?}",
+                        output.status.code()
+                    ));
                 }
 
                 // Try to find the CSV file (WhyNotWin11 may put it in different locations)
-                let candidates = [csv_path.clone(),
+                let candidates = [
+                    csv_path.clone(),
                     work_dir.join("App").join("WhyNotWin11").join("result.csv"),
-                    work_dir.join("result.csv")];
+                    work_dir.join("result.csv"),
+                ];
 
                 let found_csv = candidates.iter().find(|p| p.exists());
 
                 if let Some(csv_file) = found_csv {
-                    emit_log(
-                        &format!("Reading results from: {}", csv_file.display()),
-                        &mut logs,
-                        app,
-                    );
+                    ctx.log(format!("Reading results from: {}", csv_file.display()));
 
                     match parse_whynotwin11_csv(csv_file) {
                         Ok(result) => {
@@ -156,22 +114,14 @@ impl Service for WhyNotWin11Service {
                             let ready = failing_checks.is_empty() && !passing_checks.is_empty();
 
                             // Log results
-                            emit_log(
-                                &format!(
-                                    "Compatibility check complete: {} checks passed, {} failed",
-                                    passing_checks.len(),
-                                    failing_checks.len()
-                                ),
-                                &mut logs,
-                                app,
-                            );
+                            ctx.log(format!(
+                                "Compatibility check complete: {} checks passed, {} failed",
+                                passing_checks.len(),
+                                failing_checks.len()
+                            ));
 
                             if !failing_checks.is_empty() {
-                                emit_log(
-                                    &format!("Failing checks: {}", failing_checks.join(", ")),
-                                    &mut logs,
-                                    app,
-                                );
+                                ctx.log(format!("Failing checks: {}", failing_checks.join(", ")));
                             }
 
                             // Create main finding
@@ -181,7 +131,7 @@ impl Service for WhyNotWin11Service {
                                 FindingSeverity::Warning
                             };
 
-                            findings.push(ServiceFinding {
+                            ctx.findings.push(ServiceFinding {
                                 severity,
                                 title: if ready {
                                     "Windows 11 Compatible".to_string()
@@ -215,7 +165,7 @@ impl Service for WhyNotWin11Service {
                         Err(e) => {
                             success = false;
                             error = Some(format!("Failed to parse CSV: {}", e));
-                            emit_log(&format!("Error parsing CSV: {}", e), &mut logs, app);
+                            ctx.log(format!("Error parsing CSV: {}", e));
                         }
                     }
 
@@ -224,35 +174,27 @@ impl Service for WhyNotWin11Service {
                 } else {
                     success = false;
                     error = Some("CSV result file not found".to_string());
-                    emit_log("Error: CSV result file not found", &mut logs, app);
+                    ctx.log("Error: CSV result file not found");
 
                     // Log stdout/stderr for debugging
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = crate::proc::decode_output(&output.stdout);
+                    let stderr = crate::proc::decode_output(&output.stderr);
                     if !stdout.is_empty() {
-                        emit_log(&format!("stdout: {}", stdout), &mut logs, app);
+                        ctx.log(format!("stdout: {}", stdout));
                     }
                     if !stderr.is_empty() {
-                        emit_log(&format!("stderr: {}", stderr), &mut logs, app);
+                        ctx.log(format!("stderr: {}", stderr));
                     }
                 }
             }
             Err(e) => {
                 success = false;
                 error = Some(format!("Failed to execute WhyNotWin11: {}", e));
-                emit_log(&format!("Error: {}", e), &mut logs, app);
+                ctx.log(format!("Error: {}", e));
             }
         }
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success,
-            error,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(success, error)
     }
 }
 

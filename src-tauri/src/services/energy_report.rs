@@ -4,16 +4,12 @@
 //! Parses the HTML output to extract errors, warnings, and informational items.
 //! Requires administrator privileges.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -36,7 +32,7 @@ impl Service for EnergyReportService {
             options: vec![ServiceOptionSchema {
                 id: "duration".to_string(),
                 label: "Trace Duration (seconds)".to_string(),
-                option_type: "number".to_string(),
+                option_type: OptionType::Number,
                 default_value: json!(10),
                 min: Some(5.0),
                 max: Some(60.0),
@@ -51,24 +47,7 @@ impl Service for EnergyReportService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "energy-report";
-
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         let duration = options
             .get("duration")
             .and_then(|v| v.as_u64())
@@ -79,37 +58,26 @@ impl Service for EnergyReportService {
         let output_path = temp_dir.join("rustservice_energy_report.html");
         let output_path_str = output_path.to_string_lossy().to_string();
 
-        emit_log(
-            &format!("Starting energy efficiency trace ({} seconds)...", duration),
-            &mut logs,
-            app,
-        );
-        emit_log(
-            "Please avoid using the computer during the trace for best results.",
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Starting energy efficiency trace ({} seconds)...",
+            duration
+        ));
+        ctx.log("Please avoid using the computer during the trace for best results.");
 
         // Run powercfg /energy
-        let result = Command::new("powercfg")
-            .args([
-                "/energy",
-                "/output",
-                &output_path_str,
-                "/duration",
-                &duration.to_string(),
-            ])
-            .output();
+        let result = ctx.output(crate::proc::command("powercfg").args([
+            "/energy",
+            "/output",
+            &output_path_str,
+            "/duration",
+            &duration.to_string(),
+        ]));
 
         let output = match result {
             Ok(output) => output,
             Err(e) => {
-                emit_log(
-                    &format!("ERROR: Failed to run powercfg: {}", e),
-                    &mut logs,
-                    app,
-                );
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: Failed to run powercfg: {}", e));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Energy Report Failed".to_string(),
                     description: format!("Could not execute powercfg: {}", e),
@@ -118,26 +86,14 @@ impl Service for EnergyReportService {
                     ),
                     data: Some(json!({"type": "energy_report", "error": true})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some(format!("powercfg execution failed: {}", e)),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some(format!("powercfg execution failed: {}", e)));
             }
         };
 
         let exit_code = output.status.code().unwrap_or(-1);
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+        let stderr_str = crate::proc::decode_output(&output.stderr).to_string();
 
-        emit_log(
-            &format!("powercfg exited with code: {}", exit_code),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!("powercfg exited with code: {}", exit_code));
 
         // Read and parse the HTML report
         let html_content = match std::fs::read_to_string(&output_path) {
@@ -154,8 +110,8 @@ impl Service for EnergyReportService {
                     format!("Could not read energy report: {}", e)
                 };
 
-                emit_log(&format!("ERROR: {}", err_msg), &mut logs, app);
-                findings.push(ServiceFinding {
+                ctx.log(format!("ERROR: {}", err_msg));
+                ctx.findings.push(ServiceFinding {
                     severity: FindingSeverity::Error,
                     title: "Report Generation Failed".to_string(),
                     description: err_msg,
@@ -164,33 +120,21 @@ impl Service for EnergyReportService {
                     ),
                     data: Some(json!({"type": "energy_report", "error": true})),
                 });
-                return ServiceResult {
-                    service_id: service_id.to_string(),
-                    success: false,
-                    error: Some("Failed to generate energy report".to_string()),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    findings,
-                    logs,
-                    agent_analysis: None,
-                };
+                return ctx.finish(false, Some("Failed to generate energy report".to_string()));
             }
         };
 
-        emit_log("Parsing energy report...", &mut logs, app);
+        ctx.log("Parsing energy report...");
 
         // Parse the HTML for errors, warnings, and informational items
         let parsed = parse_energy_html(&html_content);
 
-        emit_log(
-            &format!(
-                "Found {} errors, {} warnings, {} informational items",
-                parsed.errors.len(),
-                parsed.warnings.len(),
-                parsed.informational.len()
-            ),
-            &mut logs,
-            app,
-        );
+        ctx.log(format!(
+            "Found {} errors, {} warnings, {} informational items",
+            parsed.errors.len(),
+            parsed.warnings.len(),
+            parsed.informational.len()
+        ));
 
         // Determine overall severity
         let overall_severity = if !parsed.errors.is_empty() {
@@ -251,7 +195,7 @@ impl Service for EnergyReportService {
             }))
             .collect();
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity: overall_severity,
             title: overall_title,
             description: overall_description,
@@ -272,7 +216,7 @@ impl Service for EnergyReportService {
 
         // Add individual findings for errors
         for item in &parsed.errors {
-            findings.push(ServiceFinding {
+            ctx.findings.push(ServiceFinding {
                 severity: FindingSeverity::Warning,
                 title: item.title.clone(),
                 description: item.description.clone(),
@@ -284,17 +228,9 @@ impl Service for EnergyReportService {
         // Clean up temp file
         let _ = std::fs::remove_file(&output_path);
 
-        emit_log("Energy report analysis complete.", &mut logs, app);
+        ctx.log("Energy report analysis complete.");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: true,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(true, None)
     }
 }
 

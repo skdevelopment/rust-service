@@ -1,0 +1,123 @@
+/* =============================================================================
+   Claude Theme — sourced from claude.ai computed styles
+   bg-bg-100/200/300, text-text-100/200, accent-main-100 token values
+   Light:  bg #faf9f5 / #f5f4ed / #f0eee6 · text #141413 / #3d3d3a / #73726c
+   Dark:   bg #262624 / #1f1e1d / #141413 · text #faf9f5 / #c2c0b6
+   Accent: light #c6613f · dark #d97757
+   ============================================================================= */
+
+.theme-claude {
+  /* Fonts: Poppins headings, system-ui body (matches claude.ai sans-serif feel) */
+  --font-heading: 'Poppins', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+
+  /* Surfaces */
+  --background: #faf9f5;        /* bg-bg-100 */
+  --foreground: #141413;        /* text-text-100 */
+  --card: #f5f4ed;              /* bg-bg-200 */
+  --card-foreground: #141413;
+  --popover: #faf9f5;
+  --popover-foreground: #141413;
+
+  /* Brand accent */
+  --primary: #c6613f;           /* accent-main-100 light */
+  --primary-foreground: #ffffff;
+
+  /* Surfaces 2 */
+  --secondary: #f0eee6;         /* bg-bg-300 */
+  --secondary-foreground: #141413;
+  --muted: #f0eee6;             /* bg-bg-300 */
+  --muted-foreground: #73726c;  /* text-text-400 */
+  --accent: #e8e6dc;            /* bg-bg-400 */
+  --accent-foreground: #3d3d3a;
+
+  /* State */
+  --destructive: #c62828;
+  --destructive-foreground: #ffffff;
+
+  /* Borders / inputs */
+  --border: #e5e1d8;
+  --input: #e8e6dc;
+  --ring: #c6613f;
+
+  /* Charts */
+  --chart-1: #c6613f;
+  --chart-2: #6a9bcc;
+  --chart-3: #788c5d;
+  --chart-4: #b0aea5;
+  --chart-5: #3d3d3a;
+
+  /* Sidebar */
+  --sidebar: #f5f4ed;           /* bg-bg-200 */
+  --sidebar-foreground: #141413;
+  --sidebar-primary: #c6613f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0eee6;
+  --sidebar-accent-foreground: #3d3d3a;
+  --sidebar-border: #e5e1d8;
+  --sidebar-ring: #c6613f;
+
+  --radius: 0.5rem;
+}
+
+.theme-claude.dark {
+  /* Surfaces */
+  --background: #262624;        /* bg-bg-100 dark */
+  --foreground: #faf9f5;        /* text-text-100 */
+  --card: #1f1e1d;              /* bg-bg-200 */
+  --card-foreground: #faf9f5;
+  --popover: #1f1e1d;
+  --popover-foreground: #faf9f5;
+
+  /* Brand accent */
+  --primary: #d97757;           /* accent-main-100 dark */
+  --primary-foreground: #ffffff;
+
+  /* Surfaces 2 */
+  --secondary: #1f1e1d;
+  --secondary-foreground: #faf9f5;
+  --muted: #1f1e1d;
+  --muted-foreground: #c2c0b6;  /* text-text-200 */
+  --accent: #141413;            /* bg-bg-300 */
+  --accent-foreground: #faf9f5;
+
+  /* State */
+  --destructive: #c94040;
+  --destructive-foreground: #ffffff;
+
+  /* Borders / inputs */
+  --border: #302f2d;
+  --input: #1f1e1d;
+  --ring: #d97757;
+
+  /* Charts */
+  --chart-1: #d97757;
+  --chart-2: #6a9bcc;
+  --chart-3: #788c5d;
+  --chart-4: #c2c0b6;
+  --chart-5: #faf9f5;
+
+  /* Sidebar */
+  --sidebar: #1f1e1d;           /* bg-bg-200, slightly darker than main bg */
+  --sidebar-foreground: #faf9f5;
+  --sidebar-primary: #d97757;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #262624;
+  --sidebar-accent-foreground: #faf9f5;
+  --sidebar-border: #302f2d;
+  --sidebar-ring: #d97757;
+}
+
+/* Claude theme typography — applied via cascade from html element */
+.theme-claude body {
+  font-family: var(--font-body);
+}
+
+.theme-claude h1,
+.theme-claude h2,
+.theme-claude h3,
+.theme-claude h4,
+.theme-claude h5,
+.theme-claude h6 {
+  font-family: var(--font-heading);
+}

@@ -3,16 +3,12 @@
 //! Runs Windows built-in DISM.exe to check and repair the component store.
 //! Supports CheckHealth, ScanHealth, and RestoreHealth operations.
 
-use std::process::Command;
-use std::time::Instant;
-
-use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
-use crate::services::Service;
+use crate::services::{Service, ServiceCtx};
 use crate::types::{
-    FindingSeverity, ServiceDefinition, ServiceFinding, ServiceOptionSchema, ServiceResult,
+    FindingSeverity, OptionType, ServiceDefinition, ServiceFinding, ServiceOptionSchema,
+    ServiceResult,
 };
 
 // =============================================================================
@@ -33,7 +29,7 @@ impl Service for DismService {
             options: vec![ServiceOptionSchema {
                 id: "scan_only".to_string(),
                 label: "Scan Only (no repair)".to_string(),
-                option_type: "boolean".to_string(),
+                option_type: OptionType::Boolean,
                 default_value: json!(false),
                 min: None,
                 max: None,
@@ -48,36 +44,14 @@ impl Service for DismService {
         }
     }
 
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult {
-        let start = Instant::now();
-        let mut logs: Vec<String> = Vec::new();
-        let mut findings: Vec<ServiceFinding> = Vec::new();
-        let service_id = "dism";
-
+    fn run(&self, options: &serde_json::Value, mut ctx: ServiceCtx) -> ServiceResult {
         // Parse options
         let scan_only = options
             .get("scan_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Emit log helper
-        let emit_log = |log: &str, logs: &mut Vec<String>, app: &AppHandle| {
-            logs.push(log.to_string());
-            let _ = app.emit(
-                "service-log",
-                json!({
-                    "serviceId": service_id,
-                    "log": log,
-                    "timestamp": Utc::now().to_rfc3339()
-                }),
-            );
-        };
-
-        emit_log(
-            "Starting DISM component store health check...",
-            &mut logs,
-            app,
-        );
+        ctx.log("Starting DISM component store health check...");
 
         // Determine which actions to run
         let actions: Vec<&str> = if scan_only {
@@ -94,16 +68,17 @@ impl Service for DismService {
         for action in &actions {
             let action_flag = format!("/{}", action);
 
-            emit_log(&format!("Running DISM {}...", action), &mut logs, app);
+            ctx.log(format!("Running DISM {}...", action));
 
-            let output = match Command::new("dism")
-                .args(["/Online", "/Cleanup-Image", &action_flag])
-                .output()
-            {
+            let output = match ctx.output(crate::proc::command("dism").args([
+                "/Online",
+                "/Cleanup-Image",
+                &action_flag,
+            ])) {
                 Ok(output) => output,
                 Err(e) => {
-                    emit_log(&format!("ERROR: Failed to run DISM: {}", e), &mut logs, app);
-                    findings.push(ServiceFinding {
+                    ctx.log(format!("ERROR: Failed to run DISM: {}", e));
+                    ctx.findings.push(ServiceFinding {
                         severity: FindingSeverity::Error,
                         title: "DISM Execution Failed".to_string(),
                         description: format!("Could not execute DISM: {}", e),
@@ -112,28 +87,19 @@ impl Service for DismService {
                         ),
                         data: Some(json!({"type": "error", "reason": "execution_failed"})),
                     });
-                    return ServiceResult {
-                        service_id: service_id.to_string(),
-                        success: false,
-                        error: Some(format!("DISM execution failed: {}", e)),
-                        duration_ms: start.elapsed().as_millis() as u64,
-                        findings,
-                        logs,
-                        agent_analysis: None,
-                    };
+                    return ctx.finish(false, Some(format!("DISM execution failed: {}", e)));
                 }
             };
 
             // DISM can output UTF-16LE, try to decode
-            let stdout = decode_output(&output.stdout);
-            let stderr = decode_output(&output.stderr);
+            let stdout = crate::proc::decode_output(&output.stdout);
+            let stderr = crate::proc::decode_output(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
 
-            emit_log(
-                &format!("DISM {} completed with exit code: {}", action, exit_code),
-                &mut logs,
-                app,
-            );
+            ctx.log(format!(
+                "DISM {} completed with exit code: {}",
+                action, exit_code
+            ));
 
             // Parse the output
             let parsed = parse_dism_output(&stdout);
@@ -145,11 +111,7 @@ impl Service for DismService {
                 corruption_repaired = true;
             }
             if parsed.access_denied {
-                emit_log(
-                    "ERROR: Access denied - requires administrator",
-                    &mut logs,
-                    app,
-                );
+                ctx.log("ERROR: Access denied - requires administrator");
                 overall_success = false;
             }
             if exit_code != 0 && !parsed.operation_complete {
@@ -168,22 +130,18 @@ impl Service for DismService {
 
             // Log key findings from this step
             if let Some(ref state) = parsed.health_state {
-                emit_log(&format!("Health state: {}", state), &mut logs, app);
+                ctx.log(format!("Health state: {}", state));
             }
 
             // If we found corruption and we're in scan-only mode, we can stop
             if corruption_detected && scan_only && *action == "ScanHealth" {
-                emit_log(
-                    "Corruption detected. Run without 'Scan Only' to attempt repair.",
-                    &mut logs,
-                    app,
-                );
+                ctx.log("Corruption detected. Run without 'Scan Only' to attempt repair.");
                 break;
             }
 
             // Log any stderr
             if !stderr.is_empty() && exit_code != 0 {
-                emit_log(&format!("DISM stderr: {}", stderr.trim()), &mut logs, app);
+                ctx.log(format!("DISM stderr: {}", stderr.trim()));
             }
         }
 
@@ -230,7 +188,7 @@ impl Service for DismService {
             )
         };
 
-        findings.push(ServiceFinding {
+        ctx.findings.push(ServiceFinding {
             severity,
             title,
             description,
@@ -252,17 +210,9 @@ impl Service for DismService {
             })),
         });
 
-        emit_log("DISM health check complete", &mut logs, app);
+        ctx.log("DISM health check complete");
 
-        ServiceResult {
-            service_id: service_id.to_string(),
-            success: overall_success,
-            error: None,
-            duration_ms: start.elapsed().as_millis() as u64,
-            findings,
-            logs,
-            agent_analysis: None,
-        }
+        ctx.finish(overall_success, None)
     }
 }
 
@@ -278,27 +228,6 @@ struct DismResult {
     access_denied: bool,
     operation_complete: bool,
     corruption_detected: bool,
-}
-
-fn decode_output(bytes: &[u8]) -> String {
-    // DISM often outputs UTF-16LE on Windows
-    if bytes.is_empty() {
-        return String::new();
-    }
-
-    // Check for null bytes (indicator of UTF-16)
-    if bytes.contains(&0) {
-        // Try UTF-16LE
-        let u16_iter = bytes
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
-        if let Ok(decoded) = String::from_utf16(&u16_iter.collect::<Vec<_>>()) {
-            return decoded.trim_start_matches('\u{feff}').to_string();
-        }
-    }
-
-    // Fallback to UTF-8
-    String::from_utf8_lossy(bytes).to_string()
 }
 
 fn parse_dism_output(output: &str) -> DismResult {

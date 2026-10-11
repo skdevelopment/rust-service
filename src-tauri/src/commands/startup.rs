@@ -4,7 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 
 // ============================================================================
 // Helpers
@@ -21,7 +20,7 @@ fn escape_powershell_single_quote(s: &str) -> String {
 // ============================================================================
 
 /// Source location of a startup item
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupSource {
     RegistryCurrentUser,
@@ -44,7 +43,7 @@ impl std::fmt::Display for StartupSource {
 }
 
 /// Startup item information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartupItem {
     pub id: String,
@@ -60,7 +59,7 @@ pub struct StartupItem {
 }
 
 /// Startup impact level
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupImpact {
     High,
@@ -75,22 +74,27 @@ pub enum StartupImpact {
 
 /// Get all startup items from various sources
 #[tauri::command]
+#[specta::specta]
 pub async fn get_startup_items() -> Result<Vec<StartupItem>, String> {
+    crate::proc::blocking(get_startup_items_blocking).await
+}
+
+fn get_startup_items_blocking() -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
 
     match get_registry_startup_items_sync() {
         Ok(mut registry_items) => items.append(&mut registry_items),
-        Err(e) => eprintln!("Failed to get registry startup items: {}", e),
+        Err(e) => log::warn!("Failed to get registry startup items: {}", e),
     }
 
     match get_startup_folder_items_sync() {
         Ok(mut folder_items) => items.append(&mut folder_items),
-        Err(e) => eprintln!("Failed to get startup folder items: {}", e),
+        Err(e) => log::warn!("Failed to get startup folder items: {}", e),
     }
 
     match get_scheduled_startup_tasks_sync() {
         Ok(mut task_items) => items.append(&mut task_items),
-        Err(e) => eprintln!("Failed to get scheduled startup tasks: {}", e),
+        Err(e) => log::warn!("Failed to get scheduled startup tasks: {}", e),
     }
 
     Ok(items)
@@ -98,7 +102,7 @@ pub async fn get_startup_items() -> Result<Vec<StartupItem>, String> {
 
 /// Get startup items from registry
 pub(crate) fn get_registry_startup_items_sync() -> Result<Vec<StartupItem>, String> {
-    let output = Command::new("powershell")
+    let output = crate::proc::output_with_timeout(crate::proc::command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -164,11 +168,10 @@ pub(crate) fn get_registry_startup_items_sync() -> Result<Vec<StartupItem>, Stri
             
             $items | ConvertTo-Json -Depth 3
             "#,
-        ])
-        .output()
+        ]), crate::proc::QUERY_TIMEOUT)
         .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() || stdout.trim() == "null" {
         return Ok(Vec::new());
@@ -204,7 +207,7 @@ pub(crate) fn get_registry_startup_items_sync() -> Result<Vec<StartupItem>, Stri
         let publisher = get_file_publisher(path.as_deref());
         let source_location = raw["SourceLocation"].as_str().unwrap_or("").to_string();
         items.push(StartupItem {
-            id: format!("reg_{}", sanitize_id(&name)),
+            id: encode_id("reg", &[&source_location, &name]),
             name,
             command,
             path,
@@ -280,7 +283,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
         let source_location = path.to_string_lossy().to_string();
 
         items.push(StartupItem {
-            id: format!("folder_{}", sanitize_id(&name)),
+            id: encode_id("folder", &[&command]),
             name,
             path: Some(command.clone()),
             source: source.clone(),
@@ -298,7 +301,7 @@ fn scan_startup_folder(path: &PathBuf, source: StartupSource) -> Result<Vec<Star
 
 /// Get scheduled tasks with startup triggers
 pub(crate) fn get_scheduled_startup_tasks_sync() -> Result<Vec<StartupItem>, String> {
-    let output = Command::new("powershell")
+    let output = crate::proc::output_with_timeout(crate::proc::command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -318,11 +321,10 @@ pub(crate) fn get_scheduled_startup_tasks_sync() -> Result<Vec<StartupItem>, Str
                 }
             } | ConvertTo-Json -Depth 3
             "#,
-        ])
-        .output()
+        ]), crate::proc::QUERY_TIMEOUT)
         .map_err(|e| format!("Failed to query scheduled tasks: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::proc::decode_output(&output.stdout);
 
     if stdout.trim().is_empty() || stdout.trim() == "null" {
         return Ok(Vec::new());
@@ -358,7 +360,7 @@ pub(crate) fn get_scheduled_startup_tasks_sync() -> Result<Vec<StartupItem>, Str
         let description = raw["Description"].as_str().map(|s| s.to_string());
 
         items.push(StartupItem {
-            id: format!("task_{}", sanitize_id(&name)),
+            id: encode_id("task", &[&source_location, &name]),
             name,
             command: full_command,
             path: Some(command),
@@ -376,122 +378,126 @@ pub(crate) fn get_scheduled_startup_tasks_sync() -> Result<Vec<StartupItem>, Str
 
 /// Toggle a startup item's enabled state
 #[tauri::command]
+#[specta::specta]
 pub async fn toggle_startup_item(id: String, enabled: bool) -> Result<(), String> {
-    // Parse the ID to determine the source
-    if let Some(rest) = id.strip_prefix("reg_") {
-        toggle_registry_startup_item_sync(rest, enabled)
-    } else if let Some(rest) = id.strip_prefix("task_") {
-        toggle_scheduled_task_sync(rest, enabled)
-    } else if id.starts_with("folder_") {
-        Err("Startup folder items cannot be disabled - delete them instead".to_string())
-    } else {
-        Err(format!("Unknown startup item type: {}", id))
+    crate::proc::blocking(move || toggle_startup_item_blocking(id, enabled)).await
+}
+
+fn toggle_startup_item_blocking(id: String, enabled: bool) -> Result<(), String> {
+    set_startup_item_enabled(&id, enabled)
+}
+
+/// Enable or disable a startup item by id (shared with the startup optimizer).
+pub(crate) fn set_startup_item_enabled(id: &str, enabled: bool) -> Result<(), String> {
+    match decode_id(id)? {
+        ItemRef::Registry { key, name } => set_registry_item_enabled(&key, &name, enabled),
+        ItemRef::Task { path, name } => set_task_enabled(&path, &name, enabled),
+        ItemRef::Folder { .. } => {
+            Err("Startup folder items cannot be disabled - delete them instead".to_string())
+        }
     }
 }
 
-/// Toggle a registry startup item
-pub(crate) fn toggle_registry_startup_item_sync(name: &str, enabled: bool) -> Result<(), String> {
-    // We use the StartupApproved registry key to enable/disable
-    let safe_name = escape_powershell_single_quote(name);
-    let script = if enabled {
-        format!(
-            r#"
-            # Try HKCU first, then HKLM
-            $paths = @(
-                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run',
-                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-            )
-            foreach ($path in $paths) {{
-                if (Test-Path $path) {{
-                    $item = Get-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-                    if ($item) {{
-                        # Set bytes to enable (starts with 02)
-                        $bytes = [byte[]]@(2,0,0,0,0,0,0,0,0,0,0,0)
-                        Set-ItemProperty -Path $path -Name '{}' -Value $bytes -Force
-                        break
-                    }}
-                }}
-            }}
-            "#,
-            safe_name, safe_name
-        )
-    } else {
-        format!(
-            r#"
-            # Try HKCU first, then HKLM
-            $paths = @(
-                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run',
-                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-            )
-            foreach ($path in $paths) {{
-                if (Test-Path $path) {{
-                    $item = Get-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-                    if ($item) {{
-                        # Set bytes to disable (starts with 03)
-                        $bytes = [byte[]]@(3,0,0,0,0,0,0,0,0,0,0,0)
-                        Set-ItemProperty -Path $path -Name '{}' -Value $bytes -Force
-                        break
-                    }}
-                }}
-            }}
-            "#,
-            safe_name, safe_name
-        )
-    };
+/// The `Run` keys startup items are read from; ids must name one of these.
+const RUN_KEYS: &[&str] = &[
+    r"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    r"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+];
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to toggle startup item: {}", stderr));
+/// The StartupApproved key Task Manager uses for a Run key's hive.
+fn approved_key(run_key: &str) -> Result<String, String> {
+    if !RUN_KEYS.contains(&run_key) {
+        return Err(format!("Unsupported startup registry key: {}", run_key));
     }
-
-    Ok(())
+    if run_key.ends_with("RunOnce") {
+        return Err("RunOnce entries run once at next logon and cannot be disabled".to_string());
+    }
+    let hive = &run_key[..4];
+    Ok(format!(
+        r"{}:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+        hive
+    ))
 }
 
-/// Toggle a scheduled task
-pub(crate) fn toggle_scheduled_task_sync(name: &str, enabled: bool) -> Result<(), String> {
-    let action = if enabled { "Enable" } else { "Disable" };
-    let safe_name = escape_powershell_single_quote(name);
-
-    let output = Command::new("powershell")
-        .args([
+fn run_powershell(script: &str, what: &str) -> Result<(), String> {
+    let script = format!("$ErrorActionPreference = 'Stop'\n{}", script);
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
-            &format!("{}-ScheduledTask -TaskName '{}'", action, safe_name),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to {} task: {}", action.to_lowercase(), e))?;
+            &script,
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Failed to {} scheduled task: {}",
-            action.to_lowercase(),
-            stderr
-        ));
+        let stderr = crate::proc::decode_output(&output.stderr);
+        return Err(format!("Failed to {}: {}", what, stderr.trim()));
     }
-
     Ok(())
+}
+
+/// Enable/disable a Run-key item the way Task Manager does: via a
+/// StartupApproved value (created if missing; 02 = enabled, 03 = disabled).
+fn set_registry_item_enabled(run_key: &str, name: &str, enabled: bool) -> Result<(), String> {
+    let approved = approved_key(run_key)?;
+    let flag = if enabled { 2 } else { 3 };
+    run_powershell(
+        &format!(
+            r#"
+            $key = '{key}'
+            if (-not (Test-Path $key)) {{ New-Item -Path $key -Force | Out-Null }}
+            $bytes = [byte[]]@({flag},0,0,0,0,0,0,0,0,0,0,0)
+            New-ItemProperty -Path $key -Name '{name}' -PropertyType Binary -Value $bytes -Force | Out-Null
+            "#,
+            key = escape_powershell_single_quote(&approved),
+            name = escape_powershell_single_quote(name),
+            flag = flag
+        ),
+        if enabled {
+            "enable startup item"
+        } else {
+            "disable startup item"
+        },
+    )
+}
+
+fn set_task_enabled(task_path: &str, name: &str, enabled: bool) -> Result<(), String> {
+    let action = if enabled { "Enable" } else { "Disable" };
+    run_powershell(
+        &format!(
+            "{}-ScheduledTask -TaskPath '{}' -TaskName '{}' | Out-Null",
+            action,
+            escape_powershell_single_quote(task_path),
+            escape_powershell_single_quote(name)
+        ),
+        &format!("{} scheduled task", action.to_lowercase()),
+    )
 }
 
 /// Open the file location of a startup item in Explorer
 #[tauri::command]
+#[specta::specta]
 pub async fn open_startup_item_location(path: String) -> Result<(), String> {
+    crate::proc::blocking(move || open_startup_item_location_blocking(path)).await
+}
+
+fn open_startup_item_location_blocking(path: String) -> Result<(), String> {
     let file_path = std::path::Path::new(&path);
 
     if file_path.exists() {
         // Use explorer /select to highlight the file
-        Command::new("explorer")
+        crate::proc::command("explorer")
             .args(["/select,", &path])
             .spawn()
             .map_err(|e| format!("Failed to open Explorer: {}", e))?;
     } else if let Some(parent) = file_path.parent() {
         if parent.exists() {
-            Command::new("explorer")
+            crate::proc::command("explorer")
                 .arg(parent.to_string_lossy().as_ref())
                 .spawn()
                 .map_err(|e| format!("Failed to open Explorer: {}", e))?;
@@ -507,63 +513,45 @@ pub async fn open_startup_item_location(path: String) -> Result<(), String> {
 
 /// Delete a startup item
 #[tauri::command]
-pub async fn delete_startup_item(id: String, command: Option<String>) -> Result<(), String> {
-    if let Some(rest) = id.strip_prefix("reg_") {
-        delete_registry_startup_item(rest).await
-    } else if let Some(rest) = id.strip_prefix("folder_") {
-        delete_startup_folder_item(rest, command).await
-    } else if let Some(rest) = id.strip_prefix("task_") {
-        delete_scheduled_task(rest).await
-    } else {
-        Err(format!("Unknown startup item type: {}", id))
+#[specta::specta]
+pub async fn delete_startup_item(id: String) -> Result<(), String> {
+    crate::proc::blocking(move || delete_startup_item_blocking(id)).await
+}
+
+fn delete_startup_item_blocking(id: String) -> Result<(), String> {
+    match decode_id(&id)? {
+        ItemRef::Registry { key, name } => delete_registry_startup_item(&key, &name),
+        ItemRef::Folder { path } => delete_startup_folder_item(&path),
+        ItemRef::Task { path, name } => delete_scheduled_task(&path, &name),
     }
 }
 
-/// Delete a registry startup item
-async fn delete_registry_startup_item(name: &str) -> Result<(), String> {
-    let safe_name = escape_powershell_single_quote(name);
-    let script = format!(
-        r#"
-        $paths = @(
-            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
-            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
-            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
-            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
-        )
-        $approvedPaths = @(
-            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run',
-            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-        )
-
-        foreach ($path in $paths) {{
-            Remove-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-        }}
-        foreach ($path in $approvedPaths) {{
-            Remove-ItemProperty -Path $path -Name '{}' -ErrorAction SilentlyContinue
-        }}
-        "#,
-        safe_name, safe_name
-    );
-
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to delete startup item: {}", stderr));
+/// Delete a registry startup item (and its StartupApproved state)
+fn delete_registry_startup_item(run_key: &str, name: &str) -> Result<(), String> {
+    if !RUN_KEYS.contains(&run_key) {
+        return Err(format!("Unsupported startup registry key: {}", run_key));
     }
-
-    Ok(())
+    let approved = format!(
+        r"{}:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+        &run_key[..4]
+    );
+    run_powershell(
+        &format!(
+            r#"
+            Remove-ItemProperty -Path '{key}' -Name '{name}'
+            Remove-ItemProperty -Path '{approved}' -Name '{name}' -ErrorAction SilentlyContinue
+            "#,
+            key = escape_powershell_single_quote(run_key),
+            approved = escape_powershell_single_quote(&approved),
+            name = escape_powershell_single_quote(name)
+        ),
+        "delete startup item",
+    )
 }
 
 /// Delete a startup folder item
-async fn delete_startup_folder_item(_name: &str, command: Option<String>) -> Result<(), String> {
-    let file_path = command
-        .ok_or_else(|| "No file path provided for startup folder item".to_string())?;
-
-    let path = std::path::Path::new(&file_path);
+fn delete_startup_folder_item(file_path: &str) -> Result<(), String> {
+    let path = std::path::Path::new(file_path);
 
     if !path.exists() {
         return Err(format!("File does not exist: {}", file_path));
@@ -607,44 +595,63 @@ async fn delete_startup_folder_item(_name: &str, command: Option<String>) -> Res
         ));
     }
 
-    std::fs::remove_file(path)
-        .map_err(|e| format!("Failed to delete startup item: {}", e))?;
+    std::fs::remove_file(path).map_err(|e| format!("Failed to delete startup item: {}", e))?;
 
     Ok(())
 }
 
 /// Delete a scheduled task
-async fn delete_scheduled_task(name: &str) -> Result<(), String> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "Unregister-ScheduledTask -TaskName '{}' -Confirm:$false",
-                name
-            ),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to delete task: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to delete scheduled task: {}", stderr));
-    }
-
-    Ok(())
+fn delete_scheduled_task(task_path: &str, name: &str) -> Result<(), String> {
+    run_powershell(
+        &format!(
+            "Unregister-ScheduledTask -TaskPath '{}' -TaskName '{}' -Confirm:$false",
+            escape_powershell_single_quote(task_path),
+            escape_powershell_single_quote(name)
+        ),
+        "delete scheduled task",
+    )
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/// Sanitize a name for use as an ID
-fn sanitize_id(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-        .collect::<String>()
-        .to_lowercase()
+/// What a startup item id refers to.
+#[derive(Debug, PartialEq)]
+enum ItemRef {
+    Registry { key: String, name: String },
+    Folder { path: String },
+    Task { path: String, name: String },
+}
+
+const ID_SEPARATOR: char = '\u{1f}';
+
+/// Build an id that encodes everything needed to act on the item later.
+/// Hex keeps it safe for DOM keys while staying lossless.
+fn encode_id(kind: &str, parts: &[&str]) -> String {
+    let joined = parts.join(&ID_SEPARATOR.to_string());
+    format!("{}_{}", kind, hex::encode(joined.as_bytes()))
+}
+
+fn decode_id(id: &str) -> Result<ItemRef, String> {
+    let invalid = || format!("Invalid startup item id: {}", id);
+    let (kind, payload) = id.split_once('_').ok_or_else(invalid)?;
+    let bytes = hex::decode(payload).map_err(|_| invalid())?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid())?;
+    let mut parts = text.split(ID_SEPARATOR).map(str::to_owned);
+    let mut next = || parts.next().ok_or_else(invalid);
+    match kind {
+        "reg" => Ok(ItemRef::Registry {
+            key: next()?,
+            name: next()?,
+        }),
+        "folder" => Ok(ItemRef::Folder { path: next()? }),
+        "task" => Ok(ItemRef::Task {
+            path: next()?,
+            name: next()?,
+        }),
+        _ => Err(format!("Unknown startup item type: {}", id)),
+    }
 }
 
 /// Extract executable path from a command string
@@ -707,9 +714,8 @@ fn get_file_publisher(exe_path: Option<&str>) -> Option<String> {
         let wide_path = U16CString::from_str(path).ok()?;
         let mut handle: u32 = 0;
 
-        let size = unsafe {
-            winapi::um::winver::GetFileVersionInfoSizeW(wide_path.as_ptr(), &mut handle)
-        };
+        let size =
+            unsafe { winapi::um::winver::GetFileVersionInfoSizeW(wide_path.as_ptr(), &mut handle) };
         if size == 0 {
             return None;
         }
@@ -729,9 +735,9 @@ fn get_file_publisher(exe_path: Option<&str>) -> Option<String> {
 
         // Try common language/codepage combos for CompanyName
         let sub_blocks = [
-            "\\StringFileInfo\\040904B0\\CompanyName",  // English US, Unicode
-            "\\StringFileInfo\\040904E4\\CompanyName",  // English US, Windows Latin-1
-            "\\StringFileInfo\\000004B0\\CompanyName",  // Language neutral, Unicode
+            "\\StringFileInfo\\040904B0\\CompanyName", // English US, Unicode
+            "\\StringFileInfo\\040904E4\\CompanyName", // English US, Windows Latin-1
+            "\\StringFileInfo\\000004B0\\CompanyName", // Language neutral, Unicode
         ];
 
         for sub_block in &sub_blocks {
@@ -749,8 +755,12 @@ fn get_file_publisher(exe_path: Option<&str>) -> Option<String> {
             };
 
             if ok != 0 && len > 0 && !lp_buffer.is_null() {
-                let slice = unsafe { std::slice::from_raw_parts(lp_buffer as *const u16, len as usize) };
-                let company = String::from_utf16_lossy(slice).trim_end_matches('\0').trim().to_string();
+                let slice =
+                    unsafe { std::slice::from_raw_parts(lp_buffer as *const u16, len as usize) };
+                let company = String::from_utf16_lossy(slice)
+                    .trim_end_matches('\0')
+                    .trim()
+                    .to_string();
                 if !company.is_empty() {
                     return Some(company);
                 }
@@ -759,4 +769,41 @@ fn get_file_publisher(exe_path: Option<&str>) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_round_trip_names_with_spaces_and_dots() {
+        let key = RUN_KEYS[0];
+        let id = encode_id("reg", &[key, "Microsoft Teams (work or school).exe"]);
+        assert_eq!(
+            decode_id(&id).unwrap(),
+            ItemRef::Registry {
+                key: key.to_string(),
+                name: "Microsoft Teams (work or school).exe".into()
+            }
+        );
+        let id = encode_id("task", &[r"\Vendor\", "Updater Task"]);
+        assert_eq!(
+            decode_id(&id).unwrap(),
+            ItemRef::Task {
+                path: r"\Vendor\".into(),
+                name: "Updater Task".into()
+            }
+        );
+        assert!(decode_id("reg_zz").is_err());
+    }
+
+    #[test]
+    fn approved_key_rejects_unknown_and_runonce_keys() {
+        assert!(approved_key(r"HKLM:\SOFTWARE\Evil").is_err());
+        assert!(approved_key(RUN_KEYS[1]).is_err());
+        assert_eq!(
+            approved_key(RUN_KEYS[2]).unwrap(),
+            r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+        );
+    }
 }

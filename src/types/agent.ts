@@ -3,6 +3,7 @@
  * Types for the agentic AI system including settings and command execution
  */
 
+import type * as B from '@/bindings';
 // =============================================================================
 // Provider Types
 // =============================================================================
@@ -10,17 +11,7 @@
 /**
  * Supported AI providers
  */
-export type AgentProvider =
-  | "openai"
-  | "anthropic"
-  | "xai"
-  | "google"
-  | "mistral"
-  | "deepseek"
-  | "groq"
-  | "openrouter"
-  | "ollama"
-  | "custom";
+export type AgentProvider = B.AgentProvider;
 
 /**
  * Provider configuration
@@ -41,17 +32,7 @@ export interface ProviderConfig {
 /**
  * Per-provider API key storage
  */
-export interface ProviderApiKeys {
-  openai?: string;
-  anthropic?: string;
-  xai?: string;
-  google?: string;
-  mistral?: string;
-  deepseek?: string;
-  groq?: string;
-  openrouter?: string;
-  custom?: string;
-}
+export type ProviderApiKeys = B.ProviderApiKeys_Serialize;
 
 /**
  * Available providers with their configurations
@@ -140,36 +121,14 @@ export const AGENT_PROVIDERS: ProviderConfig[] = [
   },
 ];
 
-
-
 // =============================================================================
 // MCP Client Types
 // =============================================================================
 
 /**
- * Transport type for MCP server connections
- */
-export type MCPTransportType = 'sse' | 'http';
-
-/**
  * Configuration for an external MCP server the agent can connect to
  */
-export interface MCPServerConfig {
-  /** Unique identifier */
-  id: string;
-  /** Display name */
-  name: string;
-  /** Server URL (e.g., http://localhost:3000/mcp) */
-  url: string;
-  /** Transport type */
-  transportType: MCPTransportType;
-  /** Whether this server is enabled */
-  enabled: boolean;
-  /** Optional API key for authentication */
-  apiKey?: string;
-  /** Optional custom headers */
-  headers?: Record<string, string>;
-}
+export type MCPServerConfig = B.MCPServerConfig_Serialize;
 
 // =============================================================================
 // Command Approval Types
@@ -178,30 +137,12 @@ export interface MCPServerConfig {
 /**
  * Command approval mode
  */
-export type ApprovalMode = "always" | "whitelist" | "yolo";
-
-/**
- * Status of a pending command
- */
-export type CommandStatus =
-  | "pending"
-  | "approved"
-  | "rejected"
-  | "executed"
-  | "failed";
+export type ApprovalMode = B.ApprovalMode;
 
 /**
  * A command awaiting user approval
  */
-export interface PendingCommand {
-  id: string;
-  command: string;
-  reason: string;
-  createdAt: string;
-  status: CommandStatus;
-  output?: string;
-  error?: string;
-}
+export type PendingCommand = B.PendingCommand_Serialize;
 
 // =============================================================================
 // Search Types
@@ -210,21 +151,7 @@ export interface PendingCommand {
 /**
  * Search provider options
  */
-export type SearchProvider = "tavily" | "searxng" | "none";
-
-/**
- * Search result from web search
- */
-export interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-  score?: number;
-}
-
-
-
-
+export type SearchProvider = B.SearchProvider;
 
 // =============================================================================
 // Conversation Types
@@ -233,32 +160,7 @@ export interface SearchResult {
 /**
  * A saved agent conversation
  */
-export interface Conversation {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/**
- * A message within a conversation (serialized CoreMessage content)
- */
-export interface ConversationMessage {
-  id: string;
-  conversationId: string;
-  /** Role: "user", "assistant", or "tool" */
-  role: string;
-  /** JSON-serialized message content */
-  content: string;
-  createdAt: string;
-}
-
-/**
- * Conversation with its messages
- */
-export interface ConversationWithMessages extends Conversation {
-  messages: ConversationMessage[];
-}
+export type Conversation = B.Conversation;
 
 // =============================================================================
 // Agent Settings
@@ -267,37 +169,7 @@ export interface ConversationWithMessages extends Conversation {
 /**
  * Agent configuration settings
  */
-export interface AgentSettings {
-  // Provider configuration
-  provider: AgentProvider;
-  model: string;
-  apiKeys: ProviderApiKeys;  // Per-provider API key storage
-  baseUrl?: string;
-
-  // Execution control
-  approvalMode: ApprovalMode;
-  whitelistedCommands: string[];
-
-  // Search configuration
-  searchProvider: SearchProvider;
-  tavilyApiKey?: string;
-  searxngUrl?: string;
-
-  // System prompt customization
-  systemPrompt?: string;
-
-  // MCP Server Settings (serving)
-  /** Whether the MCP HTTP server is enabled */
-  mcpServerEnabled: boolean;
-  /** API key for MCP server authentication (auto-generated) */
-  mcpApiKey?: string;
-  /** Port for the MCP HTTP server */
-  mcpPort: number;
-
-  // MCP Client Settings (connecting to external servers)
-  /** External MCP servers the agent can connect to for additional tools */
-  mcpServers?: MCPServerConfig[];
-}
+export type AgentSettings = B.AgentSettings_Serialize;
 
 /**
  * Default agent settings
@@ -324,10 +196,10 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   mcpServerEnabled: false,
   mcpApiKey: undefined,
   mcpPort: 8377,
+  mcpAllowRemote: false,
   // MCP Client Settings
   mcpServers: [],
 };
-
 
 // =============================================================================
 // Chat Types
@@ -338,199 +210,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
  */
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 
-/**
- * A chat message in the conversation
- */
-export interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  content: string;
-  createdAt: string;
-  toolCalls?: ToolCall[];
-  toolResults?: ToolResult[];
-}
-
-/**
- * A tool call made by the agent
- */
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-/**
- * Result of a tool execution
- */
-export interface ToolResult {
-  toolCallId: string;
-  result: unknown;
-  isError?: boolean;
-}
-
-// =============================================================================
-// Parts-Based Message Types (AI SDK Compatible)
-// =============================================================================
-
-/**
- * Text content part
- */
-export interface TextPart {
-  type: 'text';
-  text: string;
-}
-
-/**
- * Tool call part - represents a tool invocation by the AI
- */
-export interface ToolCallPart {
-  type: 'tool-call';
-  toolCallId: string;
-  toolName: AgentToolName;
-  args: Record<string, unknown>;
-  /** State of the tool call */
-  state: 'pending' | 'running' | 'complete' | 'error';
-}
-
-/**
- * Tool result part - represents the result of a tool execution
- * Matches AI SDK LanguageModelV2ToolResultOutput format
- */
-export interface ToolResultPart {
-  type: 'tool-result';
-  toolCallId: string;
-  toolName: AgentToolName;
-  output: {
-    type: 'text' | 'error-text';
-    value: string;
-  };
-}
-
-/**
- * Union of all message part types
- */
-export type MessagePart = TextPart | ToolCallPart | ToolResultPart;
-
-/**
- * Parts-based agent message (compatible with AI SDK UIMessage pattern)
- * This is the new recommended message format
- */
-export interface AgentMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  /** Raw text content (for backward compatibility) */
-  content: string;
-  /** Structured parts of the message */
-  parts: MessagePart[];
-  /** Timestamp */
-  createdAt: string;
-  /** Activities for UI display (derived from tool parts) */
-  activities?: import('./agent-activity').AgentActivity[];
-}
-
-/**
- * Helper to check if a message has pending HITL tool calls
- */
-export function hasPendingToolCalls(message: AgentMessage): boolean {
-  return message.parts.some(
-    part => part.type === 'tool-call' && part.state === 'pending'
-  );
-}
-
-/**
- * Helper to get all tool call parts from a message
- */
-export function getToolCallParts(message: AgentMessage): ToolCallPart[] {
-  return message.parts.filter(
-    (part): part is ToolCallPart => part.type === 'tool-call'
-  );
-}
-
-/**
- * Helper to get text content from a message
- */
-export function getTextContent(message: AgentMessage): string {
-  return message.parts
-    .filter((part): part is TextPart => part.type === 'text')
-    .map(part => part.text)
-    .join('');
-}
-
-// =============================================================================
-// Agent State
-// =============================================================================
-
-/**
- * Current state of the agent
- */
-export type AgentState = "idle" | "thinking" | "executing" | "waiting_approval";
-
-/**
- * Full agent runtime state
- */
-export interface AgentRuntimeState {
-  state: AgentState;
-  messages: ChatMessage[];
-  pendingCommands: PendingCommand[];
-  currentToolCall?: ToolCall;
-}
-
 // =============================================================================
 // File System Types
 // =============================================================================
 
-export interface FileEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  size: number;
-}
-
-export interface Instrument {
-  name: string;
-  description: string;
-  path: string;
-  extension: string;
-}
-
-// =============================================================================
-// Tool Definitions
-// =============================================================================
-
-/**
- * Names of available agent tools
- */
-export type AgentToolName =
-  | "execute_command"
-  | "search_web"
-  | "list_programs"
-  | "list_instruments"
-  | "run_instrument"
-  | "read_file"
-  | "write_file"
-  | "list_dir"
-  | "move_file"
-  | "copy_file"
-  | "get_system_info";
-
-/**
- * Tool execution request from frontend
- */
-export interface ToolExecutionRequest {
-  tool: AgentToolName;
-  args: Record<string, unknown>;
-}
-
-/**
- * Tool execution response from backend
- */
-export interface ToolExecutionResponse {
-  success: boolean;
-  result?: unknown;
-  error?: string;
-  requiresApproval?: boolean;
-  pendingCommandId?: string;
-}
-
-
-
+export type Instrument = B.Instrument;

@@ -3,14 +3,13 @@
 //! Lists and creates Windows System Restore Points using PowerShell.
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /// A Windows System Restore Point
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RestorePoint {
     pub sequence_number: u32,
@@ -20,7 +19,7 @@ pub struct RestorePoint {
 }
 
 /// Response from get_restore_points
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RestorePointsResponse {
     pub restore_points: Vec<RestorePoint>,
@@ -52,6 +51,7 @@ fn restore_type_label(type_num: u64) -> String {
 
 /// List all system restore points
 #[tauri::command]
+#[specta::specta]
 pub async fn get_restore_points() -> RestorePointsResponse {
     tokio::task::spawn_blocking(get_restore_points_blocking)
         .await
@@ -75,13 +75,14 @@ fn get_restore_points_blocking() -> RestorePointsResponse {
         }
     "#;
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", ps_script])
-        .output();
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args(["-NoProfile", "-Command", ps_script]),
+        crate::proc::QUERY_TIMEOUT,
+    );
 
     match output {
         Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let stdout = crate::proc::decode_output(&out.stdout).trim().to_string();
 
             if stdout.is_empty() || stdout == "[]" {
                 return RestorePointsResponse {
@@ -94,10 +95,7 @@ fn get_restore_points_blocking() -> RestorePointsResponse {
             let json_val: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
             match json_val {
                 Ok(serde_json::Value::Array(arr)) => {
-                    let points = arr
-                        .iter()
-                        .filter_map(parse_restore_point)
-                        .collect();
+                    let points = arr.iter().filter_map(parse_restore_point).collect();
                     RestorePointsResponse {
                         restore_points: points,
                         error: None,
@@ -120,7 +118,7 @@ fn get_restore_points_blocking() -> RestorePointsResponse {
             }
         }
         Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stderr = crate::proc::decode_output(&out.stderr).trim().to_string();
             RestorePointsResponse {
                 restore_points: Vec::new(),
                 error: Some(if stderr.is_empty() {
@@ -165,6 +163,7 @@ fn parse_restore_point(val: &serde_json::Value) -> Option<RestorePoint> {
 
 /// Create a new system restore point (requires admin privileges)
 #[tauri::command]
+#[specta::specta]
 pub async fn create_restore_point(description: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || create_restore_point_blocking(&description))
         .await
@@ -188,20 +187,25 @@ pub(crate) fn create_restore_point_blocking(description: &str) -> Result<String,
         safe_desc
     );
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_command])
-        .output();
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args(["-NoProfile", "-Command", &ps_command]),
+        std::time::Duration::from_secs(10 * 60),
+    );
 
     match output {
-        Ok(out) if out.status.success() => {
-            Ok(format!("Restore point '{}' created successfully", safe_desc))
-        }
+        Ok(out) if out.status.success() => Ok(format!(
+            "Restore point '{}' created successfully",
+            safe_desc
+        )),
         Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            if stderr.contains("Access") || stderr.contains("privilege") || stderr.contains("denied") {
+            let stderr = crate::proc::decode_output(&out.stderr).trim().to_string();
+            if stderr.contains("Access")
+                || stderr.contains("privilege")
+                || stderr.contains("denied")
+            {
                 Err("Administrator privileges required to create restore points. Run the application as administrator.".to_string())
             } else if stderr.is_empty() {
-                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stdout = crate::proc::decode_output(&out.stdout).trim().to_string();
                 if stdout.is_empty() {
                     Err("Failed to create restore point. This may require administrator privileges.".to_string())
                 } else {

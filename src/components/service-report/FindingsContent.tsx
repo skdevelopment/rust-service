@@ -24,10 +24,10 @@ import type {
 } from '@/types/service';
 import { getServiceRenderer, ServiceCardWrapper } from '@/components/service-renderers';
 import { severityIcons, severityColors } from '@/components/service-report/report-constants';
+import { resultKey } from '@/types/service';
 
 export interface FindingsContentProps {
   report: ServiceReport;
-  definitions: ServiceDefinition[];
   definitionMap: Map<string, ServiceDefinition>;
   aiSummaryLoading: boolean;
   aiSummaryError: string | null;
@@ -36,7 +36,6 @@ export interface FindingsContentProps {
 
 export function FindingsContent({
   report,
-  definitions,
   definitionMap,
   aiSummaryLoading,
   aiSummaryError,
@@ -111,7 +110,6 @@ export function FindingsContent({
       {/* Findings by Service */}
       <ServiceFindings
         report={report}
-        definitions={definitions}
         definitionMap={definitionMap}
       />
     </div>
@@ -228,10 +226,10 @@ function FailureBanner({
               {failedResults.length} service{failedResults.length > 1 ? 's' : ''} failed
             </p>
             <ul className="text-sm text-muted-foreground mt-1.5 space-y-1">
-              {failedResults.map(r => {
+              {failedResults.map((r, i) => {
                 const def = definitionMap.get(r.serviceId);
                 return (
-                  <li key={r.serviceId} className="flex items-start gap-1.5">
+                  <li key={resultKey(r, i)} className="flex items-start gap-1.5">
                     <span className="text-destructive/60 mt-0.5 shrink-0">&#8226;</span>
                     <span>
                       <span className="font-medium text-foreground">{def?.name ?? r.serviceId}</span>
@@ -254,11 +252,9 @@ function FailureBanner({
 
 function ServiceFindings({
   report,
-  definitions,
   definitionMap,
 }: {
   report: ServiceReport;
-  definitions: ServiceDefinition[];
   definitionMap: Map<string, ServiceDefinition>;
 }) {
   const sortedResults = [...report.results].sort((a, b) => {
@@ -279,7 +275,7 @@ function ServiceFindings({
 
   return (
     <>
-      {sortedResults.map((result) => {
+      {sortedResults.map((result, i) => {
         const def = definitionMap.get(result.serviceId);
         const CustomRenderer = getServiceRenderer(result.serviceId);
 
@@ -287,7 +283,7 @@ function ServiceFindings({
         if (CustomRenderer && def) {
           return (
             <CustomRenderer
-              key={result.serviceId}
+              key={resultKey(result, i)}
               result={result}
               definition={def}
               variant="findings"
@@ -310,7 +306,7 @@ function ServiceFindings({
         };
 
         return (
-          <ServiceCardWrapper key={result.serviceId} definition={fallbackDef} result={result}>
+          <ServiceCardWrapper key={resultKey(result, i)} definition={fallbackDef} result={result}>
             <div className="space-y-2">
               {/* Error message for failed services */}
               {!result.success && result.error && (

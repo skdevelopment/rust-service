@@ -1,12 +1,14 @@
 //! Modular service system
 //!
 //! Each service is implemented in its own file and registered here.
-//! Services implement the `Service` trait for consistent execution.
+//! Services implement the `Service` trait and do their work through a
+//! [`ServiceCtx`], which handles logging, findings, cancellation and results.
 
 mod adwcleaner;
 mod battery_report;
 mod bleachbit;
 mod chkdsk;
+mod ctx;
 mod disk_space;
 mod dism;
 mod drivecleanup;
@@ -30,9 +32,11 @@ mod whynotwin11;
 mod windows_update;
 mod winsat;
 
-use std::collections::HashMap;
+use serde_json::json;
 use std::sync::LazyLock;
 use tauri::AppHandle;
+
+pub use ctx::{cancel_requested, request_cancel, reset_cancel, ServiceCtx};
 
 use crate::types::{PresetServiceConfig, ServiceDefinition, ServicePreset, ServiceResult};
 
@@ -46,15 +50,15 @@ pub trait Service: Send + Sync {
     fn definition(&self) -> ServiceDefinition;
 
     /// Executes the service with the given options
-    fn run(&self, options: &serde_json::Value, app: &AppHandle) -> ServiceResult;
+    fn run(&self, options: &serde_json::Value, ctx: ServiceCtx) -> ServiceResult;
 }
 
 // =============================================================================
 // Service Registry
 // =============================================================================
 
-/// Static registry of all available services
-static SERVICE_REGISTRY: LazyLock<HashMap<String, Box<dyn Service>>> = LazyLock::new(|| {
+/// Static registry of all available services, in display order
+static SERVICE_REGISTRY: LazyLock<Vec<(String, Box<dyn Service>)>> = LazyLock::new(|| {
     let services: Vec<Box<dyn Service>> = vec![
         Box::new(restore_point::RestorePointService),
         Box::new(ping_test::PingTestService),
@@ -90,14 +94,20 @@ static SERVICE_REGISTRY: LazyLock<HashMap<String, Box<dyn Service>>> = LazyLock:
         .collect()
 });
 
-/// Get all service definitions
+/// Get all service definitions (stable, registration order)
 pub fn get_all_definitions() -> Vec<ServiceDefinition> {
-    SERVICE_REGISTRY.values().map(|s| s.definition()).collect()
+    SERVICE_REGISTRY
+        .iter()
+        .map(|(_, s)| s.definition())
+        .collect()
 }
 
 /// Get a service by ID
 pub fn get_service(id: &str) -> Option<&'static dyn Service> {
-    SERVICE_REGISTRY.get(id).map(|s| s.as_ref())
+    SERVICE_REGISTRY
+        .iter()
+        .find(|(sid, _)| sid == id)
+        .map(|(_, s)| s.as_ref())
 }
 
 /// Run a service by ID
@@ -106,12 +116,20 @@ pub fn run_service(
     options: &serde_json::Value,
     app: &AppHandle,
 ) -> Option<ServiceResult> {
-    get_service(id).map(|s| s.run(options, app))
+    get_service(id).map(|s| s.run(options, ServiceCtx::new(app, id)))
 }
 
 // =============================================================================
 // Preset Definitions
 // =============================================================================
+
+fn svc(service_id: &str, enabled: bool, options: serde_json::Value) -> PresetServiceConfig {
+    PresetServiceConfig {
+        service_id: service_id.to_string(),
+        enabled,
+        options,
+    }
+}
 
 /// Get all service presets
 pub fn get_all_presets() -> Vec<ServicePreset> {
@@ -121,46 +139,14 @@ pub fn get_all_presets() -> Vec<ServicePreset> {
             name: "Diagnostics".to_string(),
             description: "Quick diagnostic tests to identify system issues".to_string(),
             services: vec![
-                PresetServiceConfig {
-                    service_id: "ping-test".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"target": "8.8.8.8", "count": 4}),
-                },
-                PresetServiceConfig {
-                    service_id: "speedtest".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "disk-space".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "smartctl".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "battery-report".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "whynotwin11".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "energy-report".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"duration": 10}),
-                },
-                PresetServiceConfig {
-                    service_id: "network-config".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
+                svc("ping-test", true, json!({"target": "8.8.8.8", "count": 4})),
+                svc("speedtest", true, json!({})),
+                svc("disk-space", true, json!({})),
+                svc("smartctl", true, json!({})),
+                svc("battery-report", true, json!({})),
+                svc("whynotwin11", true, json!({})),
+                svc("energy-report", true, json!({"duration": 10})),
+                svc("network-config", true, json!({})),
             ],
             icon: "stethoscope".to_string(),
             color: "blue".to_string(),
@@ -170,51 +156,15 @@ pub fn get_all_presets() -> Vec<ServicePreset> {
             name: "General Service".to_string(),
             description: "Standard maintenance tasks for regular checkups".to_string(),
             services: vec![
-                PresetServiceConfig {
-                    service_id: "restore-point".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "adwcleaner".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "kvrt-scan".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "ping-test".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"target": "8.8.8.8", "count": 4}),
-                },
-                PresetServiceConfig {
-                    service_id: "speedtest".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "disk-space".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "smartctl".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "battery-report".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "network-config".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
+                svc("restore-point", true, json!({})),
+                svc("adwcleaner", true, json!({})),
+                svc("kvrt-scan", true, json!({})),
+                svc("ping-test", true, json!({"target": "8.8.8.8", "count": 4})),
+                svc("speedtest", true, json!({})),
+                svc("disk-space", true, json!({})),
+                svc("smartctl", true, json!({})),
+                svc("battery-report", true, json!({})),
+                svc("network-config", true, json!({})),
             ],
             icon: "wrench".to_string(),
             color: "green".to_string(),
@@ -224,116 +174,48 @@ pub fn get_all_presets() -> Vec<ServicePreset> {
             name: "Complete Service".to_string(),
             description: "Comprehensive scan and cleanup for thorough maintenance".to_string(),
             services: vec![
-                PresetServiceConfig {
-                    service_id: "restore-point".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "adwcleaner".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "kvrt-scan".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "bleachbit".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "drivecleanup".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"test_only": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "ping-test".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"target": "8.8.8.8", "count": 10}),
-                },
-                PresetServiceConfig {
-                    service_id: "speedtest".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "iperf".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"server": "iperf.he.net", "duration": 60, "reverse": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "disk-space".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "smartctl".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "battery-report".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "whynotwin11".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "winsat".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"drive": "C"}),
-                },
-                PresetServiceConfig {
-                    service_id: "dism".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"scan_only": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "sfc".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "windows-update".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"install_updates": true, "include_drivers": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "energy-report".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"duration": 10}),
-                },
-                PresetServiceConfig {
-                    service_id: "driver-audit".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"show_all": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "installed-software".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"include_updates": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "network-config".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "usb-stability".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"test_intensity": "standard", "verify_integrity": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "startup-optimize".to_string(),
-                    enabled: true,
-                    options: serde_json::json!({"disable_unnecessary": false, "include_disabled": false}),
-                },
+                svc("restore-point", true, json!({})),
+                svc("adwcleaner", true, json!({})),
+                svc("kvrt-scan", true, json!({})),
+                svc("bleachbit", true, json!({})),
+                svc("drivecleanup", true, json!({"test_only": false})),
+                svc("ping-test", true, json!({"target": "8.8.8.8", "count": 10})),
+                svc("speedtest", true, json!({})),
+                svc(
+                    "iperf",
+                    true,
+                    json!({"server": "iperf.he.net", "duration": 60, "reverse": true}),
+                ),
+                svc("disk-space", true, json!({})),
+                svc("smartctl", true, json!({})),
+                svc("battery-report", true, json!({})),
+                svc("whynotwin11", true, json!({})),
+                svc("winsat", true, json!({"drive": "C"})),
+                svc("dism", true, json!({"scan_only": false})),
+                svc("sfc", true, json!({})),
+                svc(
+                    "windows-update",
+                    true,
+                    json!({"install_updates": true, "include_drivers": true}),
+                ),
+                svc("energy-report", true, json!({"duration": 10})),
+                svc("driver-audit", true, json!({"show_all": false})),
+                svc(
+                    "installed-software",
+                    true,
+                    json!({"include_updates": false}),
+                ),
+                svc("network-config", true, json!({})),
+                svc(
+                    "usb-stability",
+                    false,
+                    json!({"test_intensity": "standard", "verify_integrity": true}),
+                ),
+                svc(
+                    "startup-optimize",
+                    true,
+                    json!({"disable_unnecessary": false, "include_disabled": false}),
+                ),
             ],
             icon: "shield-check".to_string(),
             color: "purple".to_string(),
@@ -343,136 +225,68 @@ pub fn get_all_presets() -> Vec<ServicePreset> {
             name: "Custom Service".to_string(),
             description: "Build your own service configuration".to_string(),
             services: vec![
-                PresetServiceConfig {
-                    service_id: "restore-point".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "adwcleaner".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "kvrt-scan".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "bleachbit".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "drivecleanup".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"test_only": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "ping-test".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "speedtest".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "iperf".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"server": "iperf.he.net", "duration": 30, "reverse": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "disk-space".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "smartctl".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "battery-report".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "whynotwin11".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "winsat".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"drive": "C"}),
-                },
-                PresetServiceConfig {
-                    service_id: "heavyload".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"duration_minutes": 5, "stress_cpu": true, "stress_memory": true, "stress_disk": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "dism".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"scan_only": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "sfc".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({}),
-                },
-                PresetServiceConfig {
-                    service_id: "windows-update".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"install_updates": false, "include_drivers": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "chkdsk".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"drive": "C:", "mode": "read_only", "schedule_if_busy": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "furmark".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"duration_seconds": 60, "width": 1920, "height": 1080}),
-                },
-                PresetServiceConfig {
-                    service_id: "stinger".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"action": "report", "include_pups": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "energy-report".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"duration": 10}),
-                },
-                PresetServiceConfig {
-                    service_id: "driver-audit".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"show_all": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "installed-software".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"include_updates": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "network-config".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"include_disabled": false}),
-                },
-                PresetServiceConfig {
-                    service_id: "usb-stability".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"test_intensity": "standard", "verify_integrity": true}),
-                },
-                PresetServiceConfig {
-                    service_id: "startup-optimize".to_string(),
-                    enabled: false,
-                    options: serde_json::json!({"disable_unnecessary": false, "include_disabled": false}),
-                },
+                svc("restore-point", false, json!({})),
+                svc("adwcleaner", false, json!({})),
+                svc("kvrt-scan", false, json!({})),
+                svc("bleachbit", false, json!({})),
+                svc("drivecleanup", false, json!({"test_only": true})),
+                svc("ping-test", false, json!({})),
+                svc("speedtest", false, json!({})),
+                svc(
+                    "iperf",
+                    false,
+                    json!({"server": "iperf.he.net", "duration": 30, "reverse": true}),
+                ),
+                svc("disk-space", false, json!({})),
+                svc("smartctl", false, json!({})),
+                svc("battery-report", false, json!({})),
+                svc("whynotwin11", false, json!({})),
+                svc("winsat", false, json!({"drive": "C"})),
+                svc(
+                    "heavyload",
+                    false,
+                    json!({"duration_minutes": 5, "stress_cpu": true, "stress_memory": true, "stress_disk": false}),
+                ),
+                svc("dism", false, json!({"scan_only": true})),
+                svc("sfc", false, json!({})),
+                svc(
+                    "windows-update",
+                    false,
+                    json!({"install_updates": false, "include_drivers": true}),
+                ),
+                svc(
+                    "chkdsk",
+                    false,
+                    json!({"drive": "C:", "mode": "read_only", "schedule_if_busy": false}),
+                ),
+                svc(
+                    "furmark",
+                    false,
+                    json!({"duration_seconds": 60, "width": 1920, "height": 1080}),
+                ),
+                svc(
+                    "stinger",
+                    false,
+                    json!({"action": "report", "include_pups": false}),
+                ),
+                svc("energy-report", false, json!({"duration": 10})),
+                svc("driver-audit", false, json!({"show_all": false})),
+                svc(
+                    "installed-software",
+                    false,
+                    json!({"include_updates": false}),
+                ),
+                svc("network-config", false, json!({"include_disabled": false})),
+                svc(
+                    "usb-stability",
+                    false,
+                    json!({"test_intensity": "standard", "verify_integrity": true}),
+                ),
+                svc(
+                    "startup-optimize",
+                    false,
+                    json!({"disable_unnecessary": false, "include_disabled": false}),
+                ),
             ],
             icon: "settings-2".to_string(),
             color: "orange".to_string(),

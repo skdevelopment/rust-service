@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Wifi,
   Network,
@@ -26,7 +25,7 @@ import {
   Check,
 } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
+import { cn, num } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +46,7 @@ import type {
 
 import { useClipboard } from '@/lib/clipboard-utils';
 import { formatPingResults, formatTracerouteResults, formatDnsResults } from '@/lib/network-utils';
+import { commands } from '@/bindings';
 
 /**
  * Network Diagnostics Page - Main component
@@ -86,8 +86,8 @@ export function NetworkDiagnosticsPage() {
     setLoading(true);
     try {
       const [ifaces, wifi] = await Promise.all([
-        invoke<NetworkInterfaceDetails[]>('get_detailed_network_info'),
-        invoke<WifiInfo>('get_wifi_info'),
+        commands.getDetailedNetworkInfo(),
+        commands.getWifiInfo(),
       ]);
       setInterfaces(ifaces);
       setWifiInfo(wifi);
@@ -102,10 +102,7 @@ export function NetworkDiagnosticsPage() {
     setPinging(true);
     setPingResult(null);
     try {
-      const result = await invoke<PingResult>('ping_host', {
-        host: pingHost,
-        count: parseInt(pingCount) || 4,
-      });
+      const result = await commands.pingHost(pingHost, parseInt(pingCount) || 4);
       setPingResult(result);
     } catch (error) {
       console.error('Ping failed:', error);
@@ -118,9 +115,7 @@ export function NetworkDiagnosticsPage() {
     setTracing(true);
     setTraceResult(null);
     try {
-      const result = await invoke<TracerouteResult>('trace_route', {
-        host: traceHost,
-      });
+      const result = await commands.traceRoute(traceHost);
       setTraceResult(result);
     } catch (error) {
       console.error('Traceroute failed:', error);
@@ -133,10 +128,7 @@ export function NetworkDiagnosticsPage() {
     setResolving(true);
     setDnsResult(null);
     try {
-      const result = await invoke<DnsLookupResult>('dns_lookup', {
-        domain: dnsQuery,
-        recordType: dnsType,
-      });
+      const result = await commands.dnsLookup(dnsQuery, dnsType ?? null);
       setDnsResult(result);
     } catch (error) {
       console.error('DNS lookup failed:', error);
@@ -386,7 +378,7 @@ export function NetworkDiagnosticsPage() {
                         </div>
                         <div className="text-center p-3 bg-muted rounded-lg">
                           <div className={`text-2xl font-bold ${
-                            pingResult.packetLossPercent > 0 ? 'text-destructive' : 'text-green-500'
+                            num(pingResult.packetLossPercent) > 0 ? 'text-destructive' : 'text-green-500'
                           }`}>
                             {pingResult.packetLossPercent}%
                           </div>

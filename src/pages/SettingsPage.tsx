@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { NAVIGATE_SETTINGS_CATEGORY_EVENT, takePendingSettingsCategory } from '@/lib/navigation';
 
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { SettingsCategory } from '@/types/settings';
@@ -28,7 +29,9 @@ import {
 // =============================================================================
 
 export function SettingsPage() {
-  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('appearance');
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(
+    () => takePendingSettingsCategory() ?? 'appearance',
+  );
 
   // Listen for external navigation to a specific settings category
   useEffect(() => {
@@ -36,12 +39,13 @@ export function SettingsPage() {
       const custom = event as CustomEvent<SettingsCategory>;
       const category = custom.detail;
       if (typeof category === 'string') {
+        takePendingSettingsCategory();
         setActiveCategory(category);
       }
     };
 
-    window.addEventListener('navigate-settings-category', handler as EventListener);
-    return () => window.removeEventListener('navigate-settings-category', handler as EventListener);
+    window.addEventListener(NAVIGATE_SETTINGS_CATEGORY_EVENT, handler as EventListener);
+    return () => window.removeEventListener(NAVIGATE_SETTINGS_CATEGORY_EVENT, handler as EventListener);
   }, []);
 
   const renderPanel = () => {

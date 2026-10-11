@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   ScrollText,
   RefreshCw,
@@ -40,6 +39,7 @@ import type { EventLogSource, EventLogEntry, EventLogFilter, EventLogStats } fro
 import { getLevelBadgeVariant, formatRelativeTime, getLevelRowClass } from '@/types/event-log';
 import { useClipboard } from '@/lib/clipboard-utils';
 import { LevelIcon, formatTime, computeStartTime } from '@/components/event-log/event-log-helpers';
+import { commands } from '@/bindings';
 
 /**
  * Event Log Viewer Page - Main component
@@ -48,7 +48,6 @@ export function EventLogPage() {
   const [sources, setSources] = useState<EventLogSource[]>([]);
   const [entries, setEntries] = useState<EventLogEntry[]>([]);
   const [stats, setStats] = useState<EventLogStats | null>(null);
-  const [loading, setLoading] = useState(true);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,27 +89,18 @@ export function EventLogPage() {
   // Load sources on mount
   useEffect(() => {
     loadSources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
   }, []);
-
-  // Load entries when log or filter changes
-  useEffect(() => {
-    if (selectedLog) {
-      loadEntries();
-      loadStats();
-    }
-  }, [selectedLog, levelFilter, limit, timeRange]);
 
   const loadSources = async () => {
     try {
-      const result = await invoke<EventLogSource[]>('get_event_log_sources');
+      const result = await commands.getEventLogSources();
       setSources(result);
       if (result.length > 0 && !result.find(s => s.name === selectedLog)) {
         setSelectedLog(result[0].name);
       }
     } catch (err) {
       console.error('Failed to load log sources:', err);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -120,12 +110,14 @@ export function EventLogPage() {
     try {
       const filter: EventLogFilter = {
         logName: selectedLog,
-        level: levelFilter === 'All' ? undefined : levelFilter,
-        startTime: computeStartTime(timeRange),
-        sourceFilter: providerFilter !== 'all' ? providerFilter : undefined,
+        level: levelFilter === 'All' ? null : levelFilter,
+        startTime: computeStartTime(timeRange) ?? null,
+        endTime: null,
+        sourceFilter: providerFilter !== 'all' ? providerFilter : null,
+        keywordFilter: null,
         limit: parseInt(limit) || 100,
       };
-      const result = await invoke<EventLogEntry[]>('get_event_logs', { filter });
+      const result = await commands.getEventLogs(filter);
       setEntries(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -134,14 +126,24 @@ export function EventLogPage() {
     }
   }, [selectedLog, levelFilter, limit, timeRange, providerFilter]);
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
-      const result = await invoke<EventLogStats>('get_event_log_stats', { logName: selectedLog });
+      const result = await commands.getEventLogStats(selectedLog);
       setStats(result);
     } catch (err) {
       console.error('Failed to load stats:', err);
     }
-  };
+  }, [selectedLog]);
+
+  // Reload entries whenever the log or any filter (including the provider) changes
+  useEffect(() => {
+    if (selectedLog) loadEntries();
+  }, [selectedLog, loadEntries]);
+
+  // Stats only depend on the selected log
+  useEffect(() => {
+    if (selectedLog) loadStats();
+  }, [selectedLog, loadStats]);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -152,11 +154,7 @@ export function EventLogPage() {
     setLoadingEntries(true);
     setError(null);
     try {
-      const result = await invoke<EventLogEntry[]>('search_event_logs', {
-        logName: selectedLog,
-        query: searchQuery,
-        limit: parseInt(limit) || 100,
-      });
+      const result = await commands.searchEventLogs(selectedLog, searchQuery, parseInt(limit) || 100);
       setEntries(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

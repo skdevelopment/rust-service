@@ -1,7 +1,6 @@
 //! System information collection command
 
 use std::cmp::Ordering;
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 use sysinfo::{Components, Disks, Motherboard, Networks, System, Users};
@@ -19,6 +18,7 @@ static SYS: OnceLock<Mutex<System>> = OnceLock::new();
 /// Returns OS, CPU, memory, disk, motherboard, GPU, battery, temperature,
 /// load average, network, and user information.
 #[tauri::command]
+#[specta::specta]
 pub async fn get_system_info() -> Result<SystemInfo, String> {
     tokio::task::spawn_blocking(get_system_info_blocking)
         .await
@@ -310,16 +310,22 @@ $result = @{
 $result | ConvertTo-Json -Depth 3 -Compress
 "#;
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output();
+    let output = crate::proc::output_with_timeout(
+        crate::proc::command("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]),
+        crate::proc::QUERY_TIMEOUT,
+    );
 
     let output = match output {
         Ok(o) if o.status.success() => o,
         _ => return (None, None, Vec::new(), None, None, None),
     };
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json_str = crate::proc::decode_output(&output.stdout);
     let v: serde_json::Value = match serde_json::from_str(&json_str) {
         Ok(v) => v,
         Err(_) => return (None, None, Vec::new(), None, None, None),
@@ -335,7 +341,9 @@ $result | ConvertTo-Json -Depth 3 -Compress
     let system_product = Some(SystemProductInfo {
         vendor: v["systemProduct"]["vendor"].as_str().map(String::from),
         model: v["systemProduct"]["model"].as_str().map(String::from),
-        serial_number: v["systemProduct"]["serialNumber"].as_str().map(String::from),
+        serial_number: v["systemProduct"]["serialNumber"]
+            .as_str()
+            .map(String::from),
         uuid: v["systemProduct"]["uuid"].as_str().map(String::from),
     });
 
@@ -370,12 +378,8 @@ $result | ConvertTo-Json -Depth 3 -Compress
                     serial_number: slot["serialNumber"].as_str().map(String::from),
                     speed_mhz: slot["speedMhz"].as_u64(),
                     capacity_bytes: slot["capacityBytes"].as_u64(),
-                    form_factor: slot["formFactor"]
-                        .as_u64()
-                        .map(&form_factor_name),
-                    memory_type: slot["smbiosMemoryType"]
-                        .as_u64()
-                        .map(&memory_type_name),
+                    form_factor: slot["formFactor"].as_u64().map(&form_factor_name),
+                    memory_type: slot["smbiosMemoryType"].as_u64().map(&memory_type_name),
                 })
                 .collect()
         })
