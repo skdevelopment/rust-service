@@ -13,10 +13,5 @@ export type Windows11IsoCatalog = B.Windows11IsoCatalog;
 export type Windows11IsoLanguage = B.Windows11IsoLanguage;
 export type Windows11IsoFile = B.Windows11IsoFile;
 export type Windows11DownloadStatus = B.Windows11DownloadStatus;
-
-/** Payload of the `windows11-iso-progress` event. */
-export interface Windows11DownloadProgress {
-  receivedBytes: number;
-  totalBytes: number | null;
-}
+export type Windows11DownloadPhase = B.Windows11DownloadPhase;
 export type Windows11UpgradeStart = B.Windows11UpgradeStart;

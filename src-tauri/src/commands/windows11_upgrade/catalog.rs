@@ -389,6 +389,22 @@ fn json_id(value: Option<&Value>) -> Option<String> {
     }
 }
 
+pub(super) const ISO_REDIRECT_LIMIT: usize = 10;
+
+/// A hop after the official ISO link. The final host may be a Microsoft CDN.
+/// The scheme stays HTTPS. `previous_hops` includes the original URL.
+pub(super) fn iso_redirect_target(url: &str, previous_hops: usize) -> Result<(), String> {
+    if previous_hops > ISO_REDIRECT_LIMIT {
+        return Err("The ISO download was redirected too many times.".into());
+    }
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| "The ISO download was redirected to a bad address.".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("The ISO download was redirected off HTTPS.".into());
+    }
+    Ok(())
+}
+
 pub(super) fn official_iso_url(url: &str) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| "Microsoft returned a download link that is not a URL.".to_string())?;
@@ -428,91 +444,209 @@ pub(super) fn iso_file_name(url: &reqwest::Url) -> String {
     }
 }
 
+struct LocaleNames {
+    prefix: &'static str,
+    names: &'static [&'static str],
+}
+
+/// Longest matching prefix wins, so `en-us` beats `en` and `es-es` beats `es`.
+const LOCALE_NAMES: &[LocaleNames] = &[
+    LocaleNames {
+        prefix: "en-us",
+        names: &["English"],
+    },
+    LocaleNames {
+        prefix: "en",
+        names: &["English (United Kingdom)", "English"],
+    },
+    LocaleNames {
+        prefix: "pt-br",
+        names: &["Brazilian Portuguese"],
+    },
+    LocaleNames {
+        prefix: "pt",
+        names: &["Portuguese", "Brazilian Portuguese"],
+    },
+    LocaleNames {
+        prefix: "zh-tw",
+        names: &["Chinese (Traditional)"],
+    },
+    LocaleNames {
+        prefix: "zh-hk",
+        names: &["Chinese (Traditional)"],
+    },
+    LocaleNames {
+        prefix: "zh-mo",
+        names: &["Chinese (Traditional)"],
+    },
+    LocaleNames {
+        prefix: "zh",
+        names: &["Chinese (Simplified)"],
+    },
+    LocaleNames {
+        prefix: "fr-ca",
+        names: &["French Canadian", "French"],
+    },
+    LocaleNames {
+        prefix: "fr",
+        names: &["French"],
+    },
+    LocaleNames {
+        prefix: "de",
+        names: &["German"],
+    },
+    LocaleNames {
+        prefix: "es-es",
+        names: &["Spanish"],
+    },
+    LocaleNames {
+        prefix: "es",
+        names: &["Spanish (Mexico)", "Spanish"],
+    },
+    LocaleNames {
+        prefix: "nl",
+        names: &["Dutch"],
+    },
+    LocaleNames {
+        prefix: "pl",
+        names: &["Polish"],
+    },
+    LocaleNames {
+        prefix: "it",
+        names: &["Italian"],
+    },
+    LocaleNames {
+        prefix: "ja",
+        names: &["Japanese"],
+    },
+    LocaleNames {
+        prefix: "ko",
+        names: &["Korean"],
+    },
+    LocaleNames {
+        prefix: "ru",
+        names: &["Russian"],
+    },
+    LocaleNames {
+        prefix: "sv",
+        names: &["Swedish"],
+    },
+    LocaleNames {
+        prefix: "da",
+        names: &["Danish"],
+    },
+    LocaleNames {
+        prefix: "fi",
+        names: &["Finnish"],
+    },
+    LocaleNames {
+        prefix: "nb",
+        names: &["Norwegian"],
+    },
+    LocaleNames {
+        prefix: "nn",
+        names: &["Norwegian"],
+    },
+    LocaleNames {
+        prefix: "no",
+        names: &["Norwegian"],
+    },
+    LocaleNames {
+        prefix: "cs",
+        names: &["Czech"],
+    },
+    LocaleNames {
+        prefix: "hu",
+        names: &["Hungarian"],
+    },
+    LocaleNames {
+        prefix: "tr",
+        names: &["Turkish"],
+    },
+    LocaleNames {
+        prefix: "ar",
+        names: &["Arabic"],
+    },
+    LocaleNames {
+        prefix: "he",
+        names: &["Hebrew"],
+    },
+    LocaleNames {
+        prefix: "uk",
+        names: &["Ukrainian"],
+    },
+    LocaleNames {
+        prefix: "el",
+        names: &["Greek"],
+    },
+    LocaleNames {
+        prefix: "ro",
+        names: &["Romanian"],
+    },
+    LocaleNames {
+        prefix: "sk",
+        names: &["Slovak"],
+    },
+    LocaleNames {
+        prefix: "sl",
+        names: &["Slovenian", "Slovene"],
+    },
+    LocaleNames {
+        prefix: "hr",
+        names: &["Croatian"],
+    },
+    LocaleNames {
+        prefix: "bg",
+        names: &["Bulgarian"],
+    },
+    LocaleNames {
+        prefix: "et",
+        names: &["Estonian"],
+    },
+    LocaleNames {
+        prefix: "lv",
+        names: &["Latvian"],
+    },
+    LocaleNames {
+        prefix: "lt",
+        names: &["Lithuanian"],
+    },
+    LocaleNames {
+        prefix: "th",
+        names: &["Thai"],
+    },
+    LocaleNames {
+        prefix: "vi",
+        names: &["Vietnamese"],
+    },
+    LocaleNames {
+        prefix: "id",
+        names: &["Indonesian"],
+    },
+    LocaleNames {
+        prefix: "sr",
+        names: &["Serbian Latin", "Serbian"],
+    },
+];
+
+fn preferred_names(locale: &str) -> &'static [&'static str] {
+    if locale.is_empty() {
+        return &["English"];
+    }
+    let mut best: Option<&LocaleNames> = None;
+    for choice in LOCALE_NAMES {
+        if locale.starts_with(choice.prefix)
+            && best.is_none_or(|current| choice.prefix.len() > current.prefix.len())
+        {
+            best = Some(choice);
+        }
+    }
+    best.map(|choice| choice.names).unwrap_or(&["English"])
+}
+
 pub(super) fn suggest_language(locale: &str, languages: &[Windows11IsoLanguage]) -> String {
     let locale = locale.trim().to_ascii_lowercase();
-    let preferred: &[&str] = if locale == "en-us" || locale.is_empty() {
-        &["English"]
-    } else if locale.starts_with("en") {
-        &["English (United Kingdom)", "English"]
-    } else if locale == "pt-br" {
-        &["Brazilian Portuguese"]
-    } else if locale.starts_with("pt") {
-        &["Portuguese", "Brazilian Portuguese"]
-    } else if locale == "zh-tw" || locale == "zh-hk" || locale == "zh-mo" {
-        &["Chinese (Traditional)"]
-    } else if locale.starts_with("zh") {
-        &["Chinese (Simplified)"]
-    } else if locale == "fr-ca" {
-        &["French Canadian", "French"]
-    } else if locale.starts_with("fr") {
-        &["French"]
-    } else if locale.starts_with("de") {
-        &["German"]
-    } else if locale == "es-mx" || (locale.starts_with("es-") && locale != "es-es") {
-        &["Spanish (Mexico)", "Spanish"]
-    } else if locale.starts_with("es") {
-        &["Spanish"]
-    } else if locale.starts_with("nl") {
-        &["Dutch"]
-    } else if locale.starts_with("pl") {
-        &["Polish"]
-    } else if locale.starts_with("it") {
-        &["Italian"]
-    } else if locale.starts_with("ja") {
-        &["Japanese"]
-    } else if locale.starts_with("ko") {
-        &["Korean"]
-    } else if locale.starts_with("ru") {
-        &["Russian"]
-    } else if locale.starts_with("sv") {
-        &["Swedish"]
-    } else if locale.starts_with("da") {
-        &["Danish"]
-    } else if locale.starts_with("fi") {
-        &["Finnish"]
-    } else if locale.starts_with("nb") || locale.starts_with("nn") || locale.starts_with("no") {
-        &["Norwegian"]
-    } else if locale.starts_with("cs") {
-        &["Czech"]
-    } else if locale.starts_with("hu") {
-        &["Hungarian"]
-    } else if locale.starts_with("tr") {
-        &["Turkish"]
-    } else if locale.starts_with("ar") {
-        &["Arabic"]
-    } else if locale.starts_with("he") {
-        &["Hebrew"]
-    } else if locale.starts_with("uk") {
-        &["Ukrainian"]
-    } else if locale.starts_with("el") {
-        &["Greek"]
-    } else if locale.starts_with("ro") {
-        &["Romanian"]
-    } else if locale.starts_with("sk") {
-        &["Slovak"]
-    } else if locale.starts_with("sl") {
-        &["Slovenian", "Slovene"]
-    } else if locale.starts_with("hr") {
-        &["Croatian"]
-    } else if locale.starts_with("bg") {
-        &["Bulgarian"]
-    } else if locale.starts_with("et") {
-        &["Estonian"]
-    } else if locale.starts_with("lv") {
-        &["Latvian"]
-    } else if locale.starts_with("lt") {
-        &["Lithuanian"]
-    } else if locale.starts_with("th") {
-        &["Thai"]
-    } else if locale.starts_with("vi") {
-        &["Vietnamese"]
-    } else if locale.starts_with("id") {
-        &["Indonesian"]
-    } else if locale.starts_with("sr") {
-        &["Serbian Latin", "Serbian"]
-    } else {
-        &["English"]
-    };
+    let preferred = preferred_names(&locale);
     for name in preferred {
         if let Some(language) = languages
             .iter()
@@ -641,10 +775,44 @@ mod tests {
 
     #[test]
     fn locale_picks_a_matching_language() {
-        let languages = vec![lang("English"), lang("German"), lang("French")];
+        let languages = vec![
+            lang("English"),
+            lang("English (United Kingdom)"),
+            lang("German"),
+            lang("French"),
+            lang("Spanish"),
+            lang("Spanish (Mexico)"),
+            lang("Chinese (Traditional)"),
+            lang("Chinese (Simplified)"),
+        ];
         assert_eq!(suggest_language("de-DE", &languages), "German");
         assert_eq!(suggest_language("en-US", &languages), "English");
+        assert_eq!(
+            suggest_language("en-GB", &languages),
+            "English (United Kingdom)"
+        );
+        assert_eq!(suggest_language("es-ES", &languages), "Spanish");
+        assert_eq!(suggest_language("es-MX", &languages), "Spanish (Mexico)");
+        assert_eq!(
+            suggest_language("zh-TW", &languages),
+            "Chinese (Traditional)"
+        );
+        assert_eq!(
+            suggest_language("zh-CN", &languages),
+            "Chinese (Simplified)"
+        );
         assert_eq!(suggest_language("ja-JP", &languages), "English");
+        assert_eq!(suggest_language("", &languages), "English");
+    }
+
+    #[test]
+    fn iso_redirects_stay_on_https_and_may_leave_the_first_host() {
+        assert!(iso_redirect_target("https://cdn.example/windows.iso", 1).is_ok());
+        assert!(iso_redirect_target("http://cdn.example/windows.iso", 1).is_err());
+        assert!(iso_redirect_target("https://cdn.example/windows.iso", ISO_REDIRECT_LIMIT).is_ok());
+        assert!(
+            iso_redirect_target("https://cdn.example/windows.iso", ISO_REDIRECT_LIMIT + 1).is_err()
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ mod setup;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -37,12 +37,8 @@ const SPACE_HEADROOM: u64 = 100 * 1024 * 1024;
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
-static RUNNING: AtomicBool = AtomicBool::new(false);
+static DOWNLOAD: Mutex<DownloadState> = Mutex::new(DownloadState::idle());
 static CANCEL: AtomicBool = AtomicBool::new(false);
-static RECEIVED: AtomicU64 = AtomicU64::new(0);
-static TOTAL: AtomicU64 = AtomicU64::new(0);
-static FINISHED_PATH: Mutex<Option<String>> = Mutex::new(None);
-static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 /// Supported uses normal Setup. Unsupported uses the server-product compatibility path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -63,23 +59,127 @@ pub struct Windows11IsoFile {
     pub file_name: String,
 }
 
-/// Bytes received while an ISO is downloading.
-#[derive(Debug, Clone, Serialize, specta::Type)]
+/// Which snapshot `Windows11DownloadStatus` is. Only the fields for this phase are set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Windows11DownloadProgress {
-    pub received_bytes: u64,
-    pub total_bytes: Option<u64>,
+pub enum Windows11DownloadPhase {
+    Idle,
+    Running,
+    Finished,
+    Failed,
 }
 
-/// Download state, including a download that finished while the page was closed.
-#[derive(Debug, Clone, Serialize, specta::Type)]
+/// One download snapshot. A poll cannot mix a new run with the previous error.
+/// `revision` increases every time the snapshot changes. Older revisions are stale.
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Windows11DownloadStatus {
-    pub running: bool,
+    pub revision: u64,
+    pub phase: Windows11DownloadPhase,
     pub received_bytes: u64,
     pub total_bytes: Option<u64>,
     pub finished_path: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Phase {
+    Idle,
+    Running {
+        received_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    Finished {
+        path: String,
+        bytes: u64,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+#[derive(Debug)]
+struct DownloadState {
+    revision: u64,
+    phase: Phase,
+}
+
+impl DownloadState {
+    const fn idle() -> Self {
+        Self {
+            revision: 0,
+            phase: Phase::Idle,
+        }
+    }
+
+    fn status(&self) -> Windows11DownloadStatus {
+        let mut status = Windows11DownloadStatus {
+            revision: self.revision,
+            phase: Windows11DownloadPhase::Idle,
+            received_bytes: 0,
+            total_bytes: None,
+            finished_path: None,
+            error: None,
+        };
+        match &self.phase {
+            Phase::Idle => {}
+            Phase::Running {
+                received_bytes,
+                total_bytes,
+            } => {
+                status.phase = Windows11DownloadPhase::Running;
+                status.received_bytes = *received_bytes;
+                status.total_bytes = *total_bytes;
+            }
+            Phase::Finished { path, bytes } => {
+                status.phase = Windows11DownloadPhase::Finished;
+                status.received_bytes = *bytes;
+                status.finished_path = Some(path.clone());
+            }
+            Phase::Failed { message } => {
+                status.phase = Windows11DownloadPhase::Failed;
+                status.error = Some(message.clone());
+            }
+        }
+        status
+    }
+
+    fn publish(&mut self, phase: Phase) -> Windows11DownloadStatus {
+        self.revision = self.revision.saturating_add(1);
+        self.phase = phase;
+        self.status()
+    }
+
+    fn try_begin(&mut self) -> Result<Windows11DownloadStatus, String> {
+        if matches!(self.phase, Phase::Running { .. }) {
+            return Err("A Windows 11 ISO download is already running.".into());
+        }
+        Ok(self.publish(Phase::Running {
+            received_bytes: 0,
+            total_bytes: None,
+        }))
+    }
+
+    /// Updates the running snapshot. A finished or failed download is left alone.
+    fn note_progress(
+        &mut self,
+        received: u64,
+        total: Option<u64>,
+    ) -> Option<Windows11DownloadStatus> {
+        let Phase::Running {
+            received_bytes,
+            total_bytes,
+        } = &mut self.phase
+        else {
+            return None;
+        };
+        *received_bytes = received;
+        if total.is_some() {
+            *total_bytes = total;
+        }
+        self.revision = self.revision.saturating_add(1);
+        Some(self.status())
+    }
 }
 
 /// Read the PC and suggest the supported or unsupported route.
@@ -96,7 +196,8 @@ pub async fn list_windows11_iso_languages() -> Result<Windows11IsoCatalog, Strin
     catalog::list_languages().await
 }
 
-/// Download that language to `dest_path`. Progress is emitted on `windows11-iso-progress`.
+/// Download that language to `dest_path`. Each `windows11-iso-progress` event
+/// is a [`Windows11DownloadStatus`] snapshot.
 #[tauri::command]
 #[specta::specta]
 pub async fn download_windows11_iso(
@@ -104,10 +205,10 @@ pub async fn download_windows11_iso(
     language: String,
     dest_path: String,
 ) -> Result<Windows11IsoFile, String> {
-    let guard = DownloadGuard::try_begin()?;
+    let mut guard = DownloadGuard::try_begin(&app)?;
     let result = download_inner(&app, &language, &dest_path).await;
     match &result {
-        Ok(file) => guard.finish_ok(&file.path),
+        Ok(file) => guard.finish_ok(&file.path, file.bytes),
         Err(error) => guard.finish_err(error),
     }
     result
@@ -124,14 +225,7 @@ pub fn cancel_windows11_iso_download() {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn windows11_iso_download_status() -> Windows11DownloadStatus {
-    let total = TOTAL.load(Ordering::Relaxed);
-    Windows11DownloadStatus {
-        running: RUNNING.load(Ordering::SeqCst),
-        received_bytes: RECEIVED.load(Ordering::Relaxed),
-        total_bytes: if total == 0 { None } else { Some(total) },
-        finished_path: lock_mutex(&FINISHED_PATH).clone(),
-        error: lock_mutex(&LAST_ERROR).clone(),
-    }
+    lock_mutex(&DOWNLOAD).status()
 }
 
 /// Mount `iso_path` and start Windows Setup for the chosen route.
@@ -145,38 +239,54 @@ pub async fn start_windows11_upgrade(
     proc::blocking(move || setup::start_sync(&iso_path, route, advanced)).await
 }
 
-struct DownloadGuard;
+struct DownloadGuard {
+    app: AppHandle,
+    settled: bool,
+}
 
 impl DownloadGuard {
-    fn try_begin() -> Result<Self, String> {
-        if RUNNING
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Err("A Windows 11 ISO download is already running.".into());
-        }
+    fn try_begin(app: &AppHandle) -> Result<Self, String> {
+        let status = lock_mutex(&DOWNLOAD).try_begin()?;
         CANCEL.store(false, Ordering::SeqCst);
-        RECEIVED.store(0, Ordering::Relaxed);
-        TOTAL.store(0, Ordering::Relaxed);
-        *lock_mutex(&FINISHED_PATH) = None;
-        *lock_mutex(&LAST_ERROR) = None;
-        Ok(Self)
+        emit_status(app, &status);
+        Ok(Self {
+            app: app.clone(),
+            settled: false,
+        })
     }
 
-    fn finish_ok(&self, path: &str) {
-        *lock_mutex(&FINISHED_PATH) = Some(path.to_string());
-        *lock_mutex(&LAST_ERROR) = None;
+    fn finish_ok(&mut self, path: &str, bytes: u64) {
+        self.settle(Phase::Finished {
+            path: path.to_string(),
+            bytes,
+        });
     }
 
-    fn finish_err(&self, error: &str) {
-        *lock_mutex(&FINISHED_PATH) = None;
-        *lock_mutex(&LAST_ERROR) = Some(error.to_string());
+    fn finish_err(&mut self, message: &str) {
+        self.settle(Phase::Failed {
+            message: message.to_string(),
+        });
+    }
+
+    fn settle(&mut self, phase: Phase) {
+        if self.settled {
+            return;
+        }
+        self.settled = true;
+        let status = lock_mutex(&DOWNLOAD).publish(phase);
+        emit_status(&self.app, &status);
     }
 }
 
 impl Drop for DownloadGuard {
     fn drop(&mut self) {
-        RUNNING.store(false, Ordering::SeqCst);
+        if self.settled {
+            return;
+        }
+        let running = matches!(lock_mutex(&DOWNLOAD).phase, Phase::Running { .. });
+        if running {
+            self.finish_err("The download stopped.");
+        }
     }
 }
 
@@ -204,7 +314,8 @@ async fn download_inner(
     let client = reqwest::Client::builder()
         .user_agent(catalog::BROWSER_USER_AGENT)
         .connect_timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .https_only(true)
+        .redirect(iso_redirect_policy())
         .build()
         .map_err(|e| format!("Could not start the download: {e}"))?;
     let mut response = poll_cancel(
@@ -221,12 +332,16 @@ async fn download_inner(
             catalog::redact_urls(&e.to_string())
         )
     })?;
+    if response.url().scheme() != "https" {
+        return Err("The ISO download left HTTPS.".into());
+    }
     let status = response.status();
     if !status.is_success() {
         return Err(format!("Microsoft returned HTTP {status} for the ISO."));
     }
 
     let total = response.content_length();
+    let mut last_emit = Instant::now();
     if let Some(total) = total {
         if !(MIN_ISO_BYTES..=MAX_ISO_BYTES).contains(&total) {
             return Err(format!(
@@ -245,7 +360,7 @@ async fn download_inner(
                 }
             }
         }
-        TOTAL.store(total, Ordering::Relaxed);
+        record_progress(app, 0, Some(total), &mut last_emit, true);
     }
 
     let mut partial_path = dest.clone().into_os_string();
@@ -257,7 +372,6 @@ async fn download_inner(
     let mut writer = BufWriter::with_capacity(1024 * 1024, file);
     let mut received: u64 = 0;
     let mut saw_body = false;
-    let mut last_emit = Instant::now();
     let mut last_byte = Instant::now();
 
     loop {
@@ -313,12 +427,8 @@ async fn download_inner(
         } else if received > MAX_ISO_BYTES {
             return Err("The download is larger than a Windows 11 ISO.".into());
         }
-        RECEIVED.store(received, Ordering::Relaxed);
         last_byte = Instant::now();
-        if last_emit.elapsed() >= PROGRESS_INTERVAL {
-            emit_progress(app, received, total);
-            last_emit = Instant::now();
-        }
+        record_progress(app, received, total, &mut last_emit, false);
     }
 
     if let Some(total) = total {
@@ -347,7 +457,6 @@ async fn download_inner(
         return Err("The downloaded file is not a CD or DVD image.".into());
     }
     commit_partial(&partial, &dest)?;
-    emit_progress(app, received, total.or(Some(received)));
 
     let file_name = dest
         .file_name()
@@ -362,15 +471,48 @@ async fn download_inner(
     })
 }
 
-fn emit_progress(app: &AppHandle, received: u64, total: Option<u64>) {
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        Windows11DownloadProgress {
-            received_bytes: received,
-            total_bytes: total,
-        },
-    );
+fn emit_status(app: &AppHandle, status: &Windows11DownloadStatus) {
+    let _ = app.emit(PROGRESS_EVENT, status);
 }
+
+fn record_progress(
+    app: &AppHandle,
+    received: u64,
+    total: Option<u64>,
+    last_emit: &mut Instant,
+    force: bool,
+) {
+    let status = lock_mutex(&DOWNLOAD).note_progress(received, total);
+    let Some(status) = status else {
+        return;
+    };
+    if force || last_emit.elapsed() >= PROGRESS_INTERVAL {
+        emit_status(app, &status);
+        *last_emit = Instant::now();
+    }
+}
+
+/// The first URL is checked with `official_iso_url`. Later hops may be a CDN,
+/// and they have to stay on HTTPS.
+fn iso_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        match catalog::iso_redirect_target(attempt.url().as_str(), attempt.previous().len()) {
+            Ok(()) => attempt.follow(),
+            Err(message) => attempt.error(RedirectDenied(message)),
+        }
+    })
+}
+
+#[derive(Debug)]
+struct RedirectDenied(String);
+
+impl std::fmt::Display for RedirectDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RedirectDenied {}
 
 fn not_canceled() -> Result<(), String> {
     if CANCEL.load(Ordering::SeqCst) {
@@ -517,6 +659,35 @@ mod tests {
         assert!(looks_like_error_page(b"\n<html>"));
         assert!(looks_like_error_page(b"{\"error\":true}"));
         assert!(!looks_like_error_page(&[0, 0, 1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn a_new_download_replaces_the_previous_error() {
+        let mut state = DownloadState::idle();
+        state.try_begin().unwrap();
+        state.publish(Phase::Failed {
+            message: "Download canceled.".into(),
+        });
+        let status = state.try_begin().unwrap();
+        assert_eq!(status.phase, Windows11DownloadPhase::Running);
+        assert_eq!(status.received_bytes, 0);
+        assert_eq!(status.error, None);
+        assert_eq!(status.finished_path, None);
+    }
+
+    #[test]
+    fn progress_does_not_change_a_finished_download() {
+        let mut state = DownloadState::idle();
+        state.try_begin().unwrap();
+        state.publish(Phase::Finished {
+            path: r"C:\Windows11.iso".into(),
+            bytes: 10,
+        });
+        assert!(state.note_progress(20, Some(10)).is_none());
+        let status = state.status();
+        assert_eq!(status.phase, Windows11DownloadPhase::Finished);
+        assert_eq!(status.finished_path.as_deref(), Some(r"C:\Windows11.iso"));
+        assert_eq!(status.error, None);
     }
 
     #[test]

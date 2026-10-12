@@ -322,7 +322,10 @@ export const commands = {
 	assessWindows11Upgrade: () => __TAURI_INVOKE<Windows11UpgradeAssessment>("assess_windows11_upgrade"),
 	/**  Languages for the current Windows 11 ISO on Microsoft's servers. */
 	listWindows11IsoLanguages: () => __TAURI_INVOKE<Windows11IsoCatalog>("list_windows11_iso_languages"),
-	/**  Download that language to `dest_path`. Progress is emitted on `windows11-iso-progress`. */
+	/**
+	 *  Download that language to `dest_path`. Each `windows11-iso-progress` event
+	 *  is a [`Windows11DownloadStatus`] snapshot.
+	 */
 	downloadWindows11Iso: (language: string, destPath: string) => __TAURI_INVOKE<Windows11IsoFile>("download_windows11_iso", { language, destPath }),
 	/**  Stop the ISO download. The partial file is deleted. */
 	cancelWindows11IsoDownload: () => __TAURI_INVOKE<void>("cancel_windows11_iso_download"),
@@ -2142,9 +2145,16 @@ export type WifiInfo = {
 	error: string | null,
 };
 
-/**  Download state, including a download that finished while the page was closed. */
+/**  Which snapshot `Windows11DownloadStatus` is. Only the fields for this phase are set. */
+export type Windows11DownloadPhase = "idle" | "running" | "finished" | "failed";
+
+/**
+ *  One download snapshot. A poll cannot mix a new run with the previous error.
+ *  `revision` increases every time the snapshot changes. Older revisions are stale.
+ */
 export type Windows11DownloadStatus = {
-	running: boolean,
+	revision: number,
+	phase: Windows11DownloadPhase,
 	receivedBytes: number,
 	totalBytes: number | null,
 	finishedPath: string | null,
@@ -2198,6 +2208,11 @@ export type Windows11UpgradeAssessment = {
 	minimumRamGb: number | null,
 	recommendedFreeSpaceGb: number | null,
 	suggestedRoute: Windows11UpgradeRoute,
+	/**
+	 *  Sentences from the same check that picked `suggested_route`. Empty when
+	 *  that route is supported.
+	 */
+	suggestionReasons: string[],
 };
 
 /**  Supported uses normal Setup. Unsupported uses the server-product compatibility path. */

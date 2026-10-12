@@ -3,8 +3,8 @@
  *
  * Checks the PC, then starts an in-place upgrade from a Windows 11 ISO.
  * The ISO comes from Microsoft's servers or from a file the technician picks.
- * Supported hardware starts setup.exe. Unsupported hardware starts
- * sources\setupprep.exe /Product Server. Setup's own window does the install.
+ * Supported hardware starts standard Setup. Unsupported hardware uses the
+ * compatibility path. Setup's own window does the install.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -47,7 +47,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn, num } from '@/lib/utils';
 import { commands } from '@/bindings';
 import type {
-  Windows11DownloadProgress,
+  Windows11DownloadStatus,
   Windows11IsoCatalog,
   Windows11UpgradeAssessment,
   Windows11UpgradeRoute,
@@ -98,10 +98,7 @@ export function Windows11Upgrade({ onBack }: { onBack: () => void }) {
 
   const routeChosen = useRef(false);
   const languageTouched = useRef(false);
-  // Set only after a status poll or progress event reports a live download.
-  // Setting it when the button is clicked would treat the still-idle status as
-  // "the download finished" and could surface an error from the previous attempt.
-  const observedRunning = useRef(false);
+  const seenRevision = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,52 +145,50 @@ export function Windows11Upgrade({ onBack }: { onBack: () => void }) {
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
 
-    // A finished download from an earlier visit fills an empty path. An old
-    // error is left alone until this visit actually sees the download running.
-    void commands.windows11IsoDownloadStatus().then((status) => {
-      if (cancelled) return;
-      if (status.finishedPath) {
-        setIsoPath((current) => current || status.finishedPath || '');
-      }
-      if (status.running) {
-        observedRunning.current = true;
-        setDownloading(true);
-        setReceived(status.receivedBytes);
-        setTotal(status.totalBytes);
-      }
-    }).catch(() => undefined);
-
-    void listen<Windows11DownloadProgress>('windows11-iso-progress', (event) => {
-      observedRunning.current = true;
-      setDownloading(true);
-      setReceived(event.payload.receivedBytes);
-      setTotal(event.payload.totalBytes);
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    });
-
-    const timer = window.setInterval(() => {
-      if (!observedRunning.current) return;
-      void commands.windows11IsoDownloadStatus().then((status) => {
-        if (cancelled || !observedRunning.current) return;
-        if (status.running) {
+    const apply = (status: Windows11DownloadStatus) => {
+      if (cancelled || status.revision <= seenRevision.current) return;
+      seenRevision.current = status.revision;
+      switch (status.phase) {
+        case 'idle':
+          setDownloading(false);
+          break;
+        case 'running':
+          setDownloading(true);
           setReceived(status.receivedBytes);
           setTotal(status.totalBytes);
-          return;
-        }
-        observedRunning.current = false;
-        setDownloading(false);
-        if (status.finishedPath) {
+          setDownloadError(null);
+          break;
+        case 'finished':
+          setDownloading(false);
+          setReceived(status.receivedBytes);
           setIsoPath((current) => current || status.finishedPath || '');
-        }
-        if (status.error) setDownloadError(status.error);
-      }).catch(() => undefined);
-    }, 1000);
+          setDownloadError(null);
+          break;
+        case 'failed':
+          setDownloading(false);
+          setDownloadError(status.error);
+          break;
+      }
+    };
+
+    void (async () => {
+      const stop = await listen<Windows11DownloadStatus>('windows11-iso-progress', (event) => {
+        apply(event.payload);
+      });
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      try {
+        apply(await commands.windows11IsoDownloadStatus());
+      } catch {
+        // The download command still reports its own result.
+      }
+    })();
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
       unlisten?.();
     };
   }, []);
@@ -243,7 +238,6 @@ export function Windows11Upgrade({ onBack }: { onBack: () => void }) {
     } catch (error) {
       setDownloadError(errorMessage(error));
     } finally {
-      observedRunning.current = false;
       setDownloading(false);
     }
   };
@@ -378,16 +372,16 @@ export function Windows11Upgrade({ onBack }: { onBack: () => void }) {
             </div>
             <p className="text-sm text-muted-foreground">
               {route === 'supported'
-                ? 'Standard Setup starts setup.exe from the ISO. Windows keeps its own hardware checks.'
-                : 'The compatibility path starts sources\\setupprep.exe /Product Server. That skips the TPM, Secure Boot, and CPU generation block. The installed edition is still the client edition on the ISO. Microsoft does not support the result.'}
+                ? "Standard Setup keeps Windows' own hardware checks."
+                : 'The compatibility path skips the TPM, Secure Boot, and CPU generation block. The installed edition is still the client edition on the ISO. Microsoft does not support the result.'}
             </p>
             {route === 'unsupported' && (
               <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 p-3">
                 <div>
                   <Label htmlFor="advanced-setup">Driver warning flags</Label>
                   <p className="text-xs text-muted-foreground">
-                    Also pass /Compat IgnoreWarning /MigrateDrivers All. These are the experimental
-                    driver-warning options from the same upgrade path.
+                    Ask Setup to ignore driver warnings and migrate drivers. These options are
+                    experimental.
                   </p>
                 </div>
                 <Switch
@@ -606,15 +600,10 @@ function summaryFor(assessment: Windows11UpgradeAssessment): string {
     return 'This PC is 32-bit. Windows 11 installation media is 64-bit only.';
   }
   if (assessment.suggestedRoute === 'unsupported') {
-    const memory = num(assessment.memoryGb);
-    const minimum = num(assessment.minimumRamGb, 4);
-    const reasons = [
-      memory > 0 && memory < minimum ? `memory is ${formatGb(memory)}` : null,
-      assessment.hasTpm20 === false ? 'TPM 2.0 was not found' : null,
-      assessment.secureBootEnabled === false ? 'Secure Boot is off' : null,
-    ].filter((reason): reason is string => reason !== null);
-    const found = reasons.length > 0 ? reasons.join(' and ') : 'a Windows 11 check did not pass';
-    return `${found.charAt(0).toUpperCase()}${found.slice(1)}. Both routes stay available. The compatibility path skips the TPM, Secure Boot, and CPU generation block.`;
+    const found = assessment.suggestionReasons.length > 0
+      ? assessment.suggestionReasons.join(' ')
+      : 'A Windows 11 check did not pass.';
+    return `${found} Both routes stay available. The compatibility path skips the TPM, Secure Boot, and CPU generation block.`;
   }
   return 'The checks that choose a route look fine. Both routes stay available, and low disk space is only a warning. Windows Setup still makes the final call.';
 }
@@ -737,10 +726,8 @@ function confirmMessage(route: Windows11UpgradeRoute, advanced: boolean, isoPath
   if (route === 'supported') {
     return `This starts ${file} with standard Setup, which keeps Windows' own hardware checks. ${backup}`;
   }
-  const flags = advanced
-    ? ' Setup also receives /Compat IgnoreWarning /MigrateDrivers All.'
-    : '';
-  return `This starts ${file} with the compatibility path, sources\\setupprep.exe /Product Server. That skips the TPM, Secure Boot, and CPU generation block. The installed edition is still the client edition on the ISO. Microsoft does not support the result.${flags} ${backup}`;
+  const extra = advanced ? ' Driver warning flags are included.' : '';
+  return `This starts ${file} with the compatibility path. That skips the TPM, Secure Boot, and CPU generation block. The installed edition is still the client edition on the ISO. Microsoft does not support the result.${extra} ${backup}`;
 }
 
 function startedMessage(result: Windows11UpgradeStart): string {

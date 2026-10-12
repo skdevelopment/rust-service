@@ -37,6 +37,15 @@ pub struct Windows11UpgradeAssessment {
     pub minimum_ram_gb: f64,
     pub recommended_free_space_gb: f64,
     pub suggested_route: Windows11UpgradeRoute,
+    /// Sentences from the same check that picked `suggested_route`. Empty when
+    /// that route is supported.
+    pub suggestion_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RouteSuggestion {
+    pub route: Windows11UpgradeRoute,
+    pub reasons: Vec<String>,
 }
 
 pub(super) fn suggested_route(
@@ -44,15 +53,26 @@ pub(super) fn suggested_route(
     memory_gb: f64,
     has_tpm20: Option<bool>,
     secure_boot_enabled: Option<bool>,
-) -> Windows11UpgradeRoute {
-    let low_memory = memory_gb > 0.0 && memory_gb < MINIMUM_RAM_GB;
-    let mismatch =
-        !is_64_bit || low_memory || has_tpm20 == Some(false) || secure_boot_enabled == Some(false);
-    if mismatch {
-        Windows11UpgradeRoute::Unsupported
-    } else {
-        Windows11UpgradeRoute::Supported
+) -> RouteSuggestion {
+    let mut reasons = Vec::new();
+    if !is_64_bit {
+        reasons.push("This PC is 32-bit.".to_string());
     }
+    if memory_gb > 0.0 && memory_gb < MINIMUM_RAM_GB {
+        reasons.push(format!("Memory is {memory_gb:.1} GB."));
+    }
+    if has_tpm20 == Some(false) {
+        reasons.push("TPM 2.0 was not found.".to_string());
+    }
+    if secure_boot_enabled == Some(false) {
+        reasons.push("Secure Boot is off.".to_string());
+    }
+    let route = if reasons.is_empty() {
+        Windows11UpgradeRoute::Supported
+    } else {
+        Windows11UpgradeRoute::Unsupported
+    };
+    RouteSuggestion { route, reasons }
 }
 
 pub(super) fn edition_label(product: &str, windows11: bool) -> String {
@@ -125,6 +145,7 @@ fn assess_windows() -> Result<Windows11UpgradeAssessment, String> {
     let has_tpm20 = read_tpm20();
     let secure_boot_enabled = read_secure_boot();
     let (has_popcnt, has_sse42) = cpu_features();
+    let suggestion = suggested_route(is_64_bit, memory_gb, has_tpm20, secure_boot_enabled);
 
     Ok(Windows11UpgradeAssessment {
         windows_name: windows_name.to_string(),
@@ -149,7 +170,8 @@ fn assess_windows() -> Result<Windows11UpgradeAssessment, String> {
         has_sse42,
         minimum_ram_gb: MINIMUM_RAM_GB,
         recommended_free_space_gb: RECOMMENDED_FREE_SPACE_GB,
-        suggested_route: suggested_route(is_64_bit, memory_gb, has_tpm20, secure_boot_enabled),
+        suggested_route: suggestion.route,
+        suggestion_reasons: suggestion.reasons,
     })
 }
 
@@ -447,34 +469,37 @@ mod tests {
 
     #[test]
     fn suggestion_stays_supported_when_firmware_checks_are_unknown() {
-        assert_eq!(
-            suggested_route(true, 16.0, None, None),
-            Windows11UpgradeRoute::Supported
-        );
+        let suggestion = suggested_route(true, 16.0, None, None);
+        assert_eq!(suggestion.route, Windows11UpgradeRoute::Supported);
+        assert!(suggestion.reasons.is_empty());
     }
 
     #[test]
     fn suggestion_switches_when_a_known_requirement_is_missing() {
+        let tpm = suggested_route(true, 16.0, Some(false), Some(true));
+        assert_eq!(tpm.route, Windows11UpgradeRoute::Unsupported);
+        assert_eq!(tpm.reasons, vec!["TPM 2.0 was not found.".to_string()]);
+
+        let memory = suggested_route(true, 3.5, Some(true), Some(true));
+        assert_eq!(memory.route, Windows11UpgradeRoute::Unsupported);
+        assert_eq!(memory.reasons, vec!["Memory is 3.5 GB.".to_string()]);
+
+        let bits = suggested_route(false, 16.0, Some(true), Some(false));
+        assert_eq!(bits.route, Windows11UpgradeRoute::Unsupported);
         assert_eq!(
-            suggested_route(true, 16.0, Some(false), Some(true)),
-            Windows11UpgradeRoute::Unsupported
-        );
-        assert_eq!(
-            suggested_route(true, 3.5, Some(true), Some(true)),
-            Windows11UpgradeRoute::Unsupported
-        );
-        assert_eq!(
-            suggested_route(false, 16.0, Some(true), Some(true)),
-            Windows11UpgradeRoute::Unsupported
+            bits.reasons,
+            vec![
+                "This PC is 32-bit.".to_string(),
+                "Secure Boot is off.".to_string()
+            ]
         );
     }
 
     #[test]
     fn unknown_memory_does_not_count_as_too_little() {
-        assert_eq!(
-            suggested_route(true, 0.0, Some(true), Some(true)),
-            Windows11UpgradeRoute::Supported
-        );
+        let suggestion = suggested_route(true, 0.0, Some(true), Some(true));
+        assert_eq!(suggestion.route, Windows11UpgradeRoute::Supported);
+        assert!(suggestion.reasons.is_empty());
     }
 
     #[test]
